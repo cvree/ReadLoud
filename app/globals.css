@@ -1,0 +1,517 @@
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════════════════════════
+   ReadLoud design system
+   Dark-first. Built on three ideas:
+     1. Depth through translucency, not borders. Surfaces are glass
+        panes floating over a slow aurora, so the app reads as one
+        continuous space rather than a grid of boxes.
+     2. One accent gradient (violet -> cyan) used sparingly, plus a
+        warm amber reserved exclusively for the spoken word. Nothing
+        else in the UI is ever amber, so your eye finds the cursor
+        instantly.
+     3. Motion that describes causality. Every transition is 120-320ms
+        on a single easing curve; nothing bounces, nothing spins for
+        decoration.
+   ══════════════════════════════════════════════════════════════ */
+
+@theme {
+  --color-ink-950: #05060a;
+  --color-ink-900: #080a11;
+  --color-ink-850: #0c0f18;
+  --color-ink-800: #11151f;
+  --color-ink-700: #1a1f2d;
+  --color-ink-600: #262d3f;
+  --color-ink-500: #3a4358;
+  --color-ink-400: #5b657e;
+  --color-ink-300: #8a94ab;
+  --color-ink-200: #b9c0d0;
+  --color-ink-100: #e2e6ef;
+
+  --color-iris-600: #5b3ff0;
+  --color-iris-500: #7c5cff;
+  --color-iris-400: #9b83ff;
+  --color-aqua-500: #22d3ee;
+  --color-aqua-400: #57e2f5;
+  --color-ember-500: #ffb86b;
+  --color-ember-400: #ffcd94;
+  --color-rose-500: #ff6b8a;
+  --color-mint-500: #4ade80;
+
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI Variable Text",
+    "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter,
+    "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+    Menlo, Consolas, monospace;
+
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+:root {
+  --surface: color-mix(in oklab, var(--color-ink-800) 62%, transparent);
+  --surface-strong: color-mix(in oklab, var(--color-ink-850) 84%, transparent);
+  --hairline: color-mix(in oklab, white 9%, transparent);
+  --hairline-strong: color-mix(in oklab, white 15%, transparent);
+  --glow-iris: 0 0 0 1px color-mix(in oklab, var(--color-iris-500) 35%, transparent),
+    0 8px 32px -8px color-mix(in oklab, var(--color-iris-500) 55%, transparent);
+  /* Recessed surfaces: inputs, selects, code blocks. A dark wash on a dark
+     ground, a light wash on a light one - never a black box on paper. */
+  --field: color-mix(in oklab, black 25%, transparent);
+  --shadow-pane: 0 1px 0 0 color-mix(in oklab, white 6%, transparent) inset,
+    0 24px 60px -28px rgb(0 0 0 / 0.9);
+  color-scheme: dark;
+}
+
+/* Light theme: a paper mode for long daytime reading. Same structure,
+   inverted values — no separate component styles anywhere. */
+:root[data-theme="light"] {
+  --color-ink-950: #f6f5f2;
+  --color-ink-900: #efeee9;
+  --color-ink-850: #ffffff;
+  --color-ink-800: #ffffff;
+  --color-ink-700: #e7e5df;
+  --color-ink-600: #d6d3ca;
+  --color-ink-500: #b6b2a7;
+  --color-ink-400: #86816f;
+  --color-ink-300: #5f5b4f;
+  --color-ink-200: #3b382f;
+  --color-ink-100: #16150f;
+  --surface: color-mix(in oklab, white 78%, transparent);
+  --surface-strong: color-mix(in oklab, white 92%, transparent);
+  --hairline: color-mix(in oklab, black 9%, transparent);
+  --hairline-strong: color-mix(in oklab, black 16%, transparent);
+  --shadow-pane: 0 1px 0 0 color-mix(in oklab, white 90%, transparent) inset,
+    0 20px 50px -30px rgb(40 34 20 / 0.35);
+  --field: color-mix(in oklab, #6b6455 7%, transparent);
+
+  /* The accent ramp is tuned for luminous text on a dark ground. On paper the
+     same hues need to go down, not up, or every warning and success note
+     turns into illegible pastel. Overriding the tokens keeps every utility
+     (`text-ember-400`, `text-mint-500`, ...) correct in both themes with no
+     per-component branching. */
+  --color-iris-600: #4327c9;
+  --color-iris-500: #5a3ce0;
+  --color-iris-400: #4a2fc4;
+  --color-aqua-500: #0e7490;
+  --color-aqua-400: #0b6076;
+  --color-ember-500: #b45309;
+  --color-ember-400: #8a4708;
+  --color-rose-500: #be1e45;
+  --color-mint-500: #157f43;
+  color-scheme: light;
+}
+
+* {
+  border-color: var(--hairline);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+/* ── Aurora backdrop ──────────────────────────────────────────
+   Three blurred radial fields drifting on long, prime-ish periods so
+   they never visibly loop. GPU-composited only (transform/opacity),
+   so it costs nothing while text is being highlighted at word rate. */
+
+.aurora {
+  position: fixed;
+  inset: -30vmax;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(90px) saturate(140%);
+  opacity: 0.55;
+}
+.aurora::before,
+.aurora::after,
+.aurora > i {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+}
+.aurora::before {
+  width: 60vmax;
+  height: 60vmax;
+  left: 8%;
+  top: 4%;
+  background: radial-gradient(circle at 30% 30%, var(--color-iris-600), transparent 62%);
+  animation: drift-a 47s var(--ease-in-out-soft) infinite;
+}
+.aurora::after {
+  width: 52vmax;
+  height: 52vmax;
+  right: 4%;
+  top: 18%;
+  background: radial-gradient(circle at 60% 40%, var(--color-aqua-500), transparent 62%);
+  animation: drift-b 61s var(--ease-in-out-soft) infinite;
+}
+.aurora > i {
+  width: 44vmax;
+  height: 44vmax;
+  left: 34%;
+  bottom: 0%;
+  background: radial-gradient(circle at 50% 50%, var(--color-ember-500), transparent 64%);
+  opacity: 0.42;
+  animation: drift-c 73s var(--ease-in-out-soft) infinite;
+}
+:root[data-theme="light"] .aurora {
+  opacity: 0.28;
+  filter: blur(110px) saturate(120%);
+}
+
+@keyframes drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(12vw, 8vh, 0) scale(1.18); }
+}
+@keyframes drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.1); }
+  50% { transform: translate3d(-14vw, 12vh, 0) scale(0.92); }
+}
+@keyframes drift-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
+  50% { transform: translate3d(9vw, -10vh, 0) scale(1.22); }
+}
+
+/* Fine noise over the aurora kills the banding that big soft gradients
+   produce on 8-bit displays. */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── Glass surfaces ───────────────────────────────────────────── */
+
+.glass {
+  background: var(--surface);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-pane);
+}
+.glass-strong {
+  background: var(--surface-strong);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--shadow-pane);
+}
+
+/* Backdrop-filter is expensive on low-end GPUs and unsupported in a few
+   engines; fall back to an opaque surface rather than an unreadable one. */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass, .glass-strong {
+    background: color-mix(in oklab, var(--color-ink-850) 96%, transparent);
+  }
+}
+
+.hairline-t { border-top: 1px solid var(--hairline); }
+.hairline-b { border-bottom: 1px solid var(--hairline); }
+
+/* ── Gradient text & accents ──────────────────────────────────── */
+
+.grad-text {
+  background: linear-gradient(105deg, var(--color-iris-400), var(--color-aqua-400) 55%, var(--color-ember-400));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.ring-focus:focus-visible {
+  outline: none;
+  box-shadow: var(--glow-iris);
+}
+
+/* ── Reading mode highlight ───────────────────────────────────── */
+
+.passage {
+  transition: background-color 260ms var(--ease-out-soft),
+    color 260ms var(--ease-out-soft), opacity 260ms var(--ease-out-soft);
+  border-radius: 0.75rem;
+}
+.passage-idle {
+  color: color-mix(in oklab, var(--color-ink-200) 78%, transparent);
+}
+.passage-active {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--color-iris-500) 13%, transparent),
+    color-mix(in oklab, var(--color-aqua-500) 7%, transparent)
+  );
+  color: var(--color-ink-100);
+  box-shadow: inset 3px 0 0 0 var(--color-iris-500);
+}
+.passage-read {
+  color: color-mix(in oklab, var(--color-ink-300) 62%, transparent);
+}
+
+/* The sentence currently being spoken gets a soft bed... */
+.sentence-active {
+  background: color-mix(in oklab, var(--color-ember-500) 9%, transparent);
+  border-radius: 0.4rem;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-ember-500) 9%, transparent);
+}
+
+/* ...and the individual word gets the only amber in the entire app. */
+.word-active {
+  position: relative;
+  color: var(--color-ink-950);
+  background: linear-gradient(180deg, var(--color-ember-400), var(--color-ember-500));
+  border-radius: 0.3rem;
+  padding: 0.06em 0.16em;
+  margin: 0 -0.16em;
+  box-shadow: 0 2px 12px -2px color-mix(in oklab, var(--color-ember-500) 70%, transparent);
+  animation: word-pop 180ms var(--ease-out-soft);
+}
+:root[data-theme="light"] .word-active {
+  /* The accent tokens go dark on paper so that warning *text* stays legible,
+     but the word chip is a filled block: it needs the opposite treatment, or
+     the highlighted word turns into dark-on-dark. Fixed values, on purpose. */
+  color: #2c1c04;
+  background: linear-gradient(180deg, #ffdca8, #ffc36e);
+  box-shadow: 0 2px 12px -3px rgb(196 124 18 / 0.5);
+}
+:root[data-theme="light"] .sentence-active {
+  background: color-mix(in oklab, #ffb86b 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, #ffb86b 22%, transparent);
+}
+:root[data-theme="light"] .passage-active {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--color-iris-500) 8%, transparent),
+    color-mix(in oklab, var(--color-aqua-500) 4%, transparent)
+  );
+}
+@keyframes word-pop {
+  from { transform: scale(0.94); opacity: 0.7; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Focus mode dims everything except the passage being read, so a
+   1,200-page document collapses to the two paragraphs that matter. */
+.focus-dim .passage:not(.passage-active) {
+  opacity: 0.2;
+  filter: blur(0.6px);
+}
+
+/* ── Controls ─────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.7rem;
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  transition: transform 140ms var(--ease-out-soft),
+    background-color 160ms var(--ease-out-soft), color 160ms var(--ease-out-soft),
+    border-color 160ms var(--ease-out-soft), box-shadow 160ms var(--ease-out-soft),
+    opacity 160ms var(--ease-out-soft);
+  user-select: none;
+  white-space: nowrap;
+}
+.btn:active:not(:disabled) { transform: translateY(1px) scale(0.985); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--color-iris-500), var(--color-iris-600));
+  color: white;
+  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.18) inset,
+    0 10px 30px -12px color-mix(in oklab, var(--color-iris-500) 90%, transparent);
+}
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--color-iris-400), var(--color-iris-500));
+  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.22) inset,
+    0 14px 38px -12px color-mix(in oklab, var(--color-iris-500) 100%, transparent);
+}
+
+.btn-ghost {
+  background: color-mix(in oklab, white 4%, transparent);
+  border: 1px solid var(--hairline);
+  color: var(--color-ink-200);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: color-mix(in oklab, white 9%, transparent);
+  border-color: var(--hairline-strong);
+  color: var(--color-ink-100);
+}
+:root[data-theme="light"] .btn-ghost {
+  background: color-mix(in oklab, black 3%, transparent);
+}
+:root[data-theme="light"] .btn-ghost:hover:not(:disabled) {
+  background: color-mix(in oklab, black 6%, transparent);
+}
+
+/* Range inputs, restyled per-engine. Worth the verbosity: the scrubber
+   is the control people touch most. */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+}
+.range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--color-iris-500) 0%,
+    var(--color-aqua-500) var(--fill, 0%),
+    color-mix(in oklab, white 12%, transparent) var(--fill, 0%)
+  );
+}
+.range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, white 12%, transparent);
+}
+.range::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--color-iris-500), var(--color-aqua-500));
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: white;
+  border: none;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 2px 10px -1px rgb(0 0 0 / 0.6);
+  transition: transform 140ms var(--ease-out-soft), box-shadow 140ms var(--ease-out-soft);
+}
+.range::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: white;
+  border: none;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 2px 10px -1px rgb(0 0 0 / 0.6);
+}
+.range:hover::-webkit-slider-thumb { transform: scale(1.22); }
+.range:active::-webkit-slider-thumb {
+  transform: scale(1.32);
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-iris-500) 26%, transparent);
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────── */
+
+.scroll-fine { scrollbar-width: thin; scrollbar-color: var(--color-ink-600) transparent; }
+.scroll-fine::-webkit-scrollbar { width: 10px; height: 10px; }
+.scroll-fine::-webkit-scrollbar-track { background: transparent; }
+.scroll-fine::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, white 10%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.scroll-fine::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, white 20%, transparent);
+  background-clip: content-box;
+}
+
+/* ── Motion primitives ────────────────────────────────────────── */
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+.animate-rise { animation: rise 380ms var(--ease-out-soft) both; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.animate-fade { animation: fade-in 240ms var(--ease-out-soft) both; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(16px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.animate-toast { animation: toast-in 280ms var(--ease-out-soft) both; }
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+.shimmer {
+  background-image: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in oklab, white 14%, transparent) 40%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.7s linear infinite;
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-iris-500) 45%, transparent); }
+  70% { box-shadow: 0 0 0 14px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.pulse-ring { animation: pulse-ring 2.1s var(--ease-out-soft) infinite; }
+
+/* Speaking indicator: five bars whose heights are driven by CSS alone.
+   A real analyser is pointless here — Web Speech exposes no signal — so
+   this is honest ornament, and it stops the moment playback stops. */
+.eq { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+.eq span {
+  width: 2.5px;
+  border-radius: 999px;
+  background: currentColor;
+  height: 30%;
+  animation: eq-bounce 1.05s var(--ease-in-out-soft) infinite;
+}
+.eq span:nth-child(2) { animation-delay: 0.14s; }
+.eq span:nth-child(3) { animation-delay: 0.28s; }
+.eq span:nth-child(4) { animation-delay: 0.42s; }
+.eq span:nth-child(5) { animation-delay: 0.56s; }
+@keyframes eq-bounce {
+  0%, 100% { height: 26%; opacity: 0.55; }
+  50% { height: 100%; opacity: 1; }
+}
+
+.dropzone-hot {
+  border-color: var(--color-iris-400) !important;
+  background: color-mix(in oklab, var(--color-iris-500) 12%, transparent) !important;
+  transform: scale(1.008);
+}
+
+/* ── Accessibility ────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .aurora { animation: none; }
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-iris-500) 45%, transparent);
+  color: white;
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
