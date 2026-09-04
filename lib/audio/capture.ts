@@ -8,9 +8,10 @@
 
    So there are exactly two honest paths to an MP3:
 
-     A. Use a provider that returns audio bytes (OpenAI, ElevenLabs).
-        Deterministic, faster than realtime, sample-accurate. This is
-        `lib/audio/pipeline.ts` and it is the default.
+     A. Use a provider that returns audio bytes — Kokoro, which
+        renders on-device. Deterministic, faster than realtime,
+        sample-accurate. This is `lib/audio/pipeline.ts`, and it is
+        the default.
 
      B. Capture the audio the browser is actually playing, via
         `getDisplayMedia({ audio: true })`, while it speaks. Realtime
@@ -53,7 +54,7 @@ export interface CaptureSession {
 export async function startTabCapture(opts: Mp3Options): Promise<CaptureSession> {
   if (!isTabCaptureSupported()) {
     throw new Error(
-      "Tab audio capture is not supported in this browser. Use Chrome or Edge, or configure a cloud voice for instant export.",
+      "Tab audio capture is not supported in this browser. Use Chrome or Edge, or switch to the Kokoro engine for instant export.",
     );
   }
 

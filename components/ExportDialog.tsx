@@ -4,7 +4,7 @@
 
    Three paths, and the dialog is honest about which one you are on:
 
-   * Studio render (cloud voice) — synthesize, decode, LAME-encode.
+   * Studio render (Kokoro) — synthesize, decode, LAME-encode.
      Faster than realtime, deterministic, exact timings for subtitles.
    * Realtime capture (system voice) — record what the browser plays.
      Works, but takes as long as the book, and Chromium only. This
@@ -316,7 +316,7 @@ export function ExportDialog() {
                   checked={trim}
                   onChange={setTrim}
                   label="Trim provider padding"
-                  hint="Cloud voices pad each clip with silence. Across thousands of passages that becomes minutes of dead air."
+                  hint="Neural voices pad each clip with silence. Across thousands of passages that becomes minutes of dead air."
                 />
                 <Switch
                   checked={normalize}
@@ -453,8 +453,8 @@ function CaptureNotice({ supported }: { supported: boolean }) {
         </p>
         {!supported && (
           <p className="mt-1.5 text-rose-500">
-            This browser does not support tab capture. Add an OpenAI or ElevenLabs key
-            for instant, offline MP3 rendering.
+            This browser does not support tab capture. Switch to the Kokoro engine
+            for instant, fully offline MP3 rendering.
           </p>
         )}
       </div>

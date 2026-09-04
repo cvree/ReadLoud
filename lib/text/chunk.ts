@@ -7,9 +7,10 @@
    1. Every engine has an undocumented ceiling. Chrome's SAPI bridge
       silently truncates long utterances and Safari drops them
       entirely. ~500-1500 chars is the safe band.
-   2. Cloud TTS endpoints have hard per-request limits (OpenAI: 4096
-      chars) and per-request pricing — chunks are the unit of retry,
-      caching and cost accounting.
+   2. Neural TTS models have hard input ceilings of their own — Kokoro
+      truncates past 510 phoneme tokens, which is why
+      `lib/tts/kokoro.worker.ts` sub-splits a chunk again before
+      synthesis. Chunks are the unit of retry and caching.
    3. Chunks are the unit of *seeking*. You cannot scrub into the
       middle of a Web Speech utterance; you can only start a new one.
       Small chunks are what make the scrubber feel continuous.

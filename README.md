@@ -8,7 +8,9 @@ Ingest a nine-hundred-page PDF or EPUB, read it aloud with narrator pacing,
 follow along word by word, and export the whole thing as an MP3 with a
 transcript whose timings actually match the audio.
 
-Everything — parsing, highlighting, MP3 encoding — runs in the browser.
+Everything — parsing, **the neural voice itself**, highlighting, MP3 encoding —
+runs in the browser. No account, no API key, no server, no bill. Nothing you
+open ever leaves your machine.
 
 </div>
 
@@ -17,23 +19,18 @@ Everything — parsing, highlighting, MP3 encoding — runs in the browser.
 ## Quick start
 
 ```bash
-npm install          # also copies the pdf.js worker into public/
+npm install          # also copies the pdf.js and onnxruntime workers into public/
 npm run dev          # http://localhost:3000
 ```
 
-That's it. No API keys, no services. The app works immediately using your
-browser's built-in speech engine — open it, click **Try the sample**, press
-space.
+That's it. There is nothing to configure — no keys, no accounts, no services.
+Open it, click **Try the sample**, press space.
 
-To unlock studio voices and instant MP3 export:
-
-```bash
-cp .env.example .env.local
-# add OPENAI_API_KEY and/or ELEVENLABS_API_KEY
-npm run dev
-```
-
-Keys stay on the server. The browser talks to `/api/tts`, never to a provider.
+The first time you press play, ReadLoud downloads **Kokoro-82M** (~86 MB), an
+Apache-2.0 neural text-to-speech model, and runs it locally from then on. The
+browser caches it, so it is a one-time cost and the app works fully offline
+afterwards. If you would rather not spend the download, switch the engine to
+**System voices** — your OS voices, instantly, with nothing to fetch.
 
 ---
 
@@ -42,7 +39,7 @@ Keys stay on the server. The browser talks to `/api/tts`, never to a provider.
 | | |
 |---|---|
 | **Ingests** | PDF (pdf.js), EPUB, Markdown, HTML, plain text, pasted text |
-| **Reads aloud** | Web Speech API, OpenAI TTS, ElevenLabs — one interface, hot-swappable |
+| **Reads aloud** | Kokoro-82M running on-device (WebGPU, or WASM), plus your OS voices — one interface, hot-swappable |
 | **Follows along** | Word-level highlighting, sentence bedding, focus mode, auto-scroll |
 | **Exports audio** | Real MP3 via LAME in a worker, streaming, faster than realtime |
 | **Exports text** | Markdown, plain text, SRT, WebVTT, JSON — with measured timings |
@@ -63,9 +60,8 @@ in Chromium:
 
 ```
 app/
-  api/tts/route.ts        The only place an API key is ever touched
   globals.css             Design system: tokens, glass, aurora, highlight states
-  layout.tsx  page.tsx
+  icon.svg  layout.tsx  page.tsx
 
 lib/
   types.ts                Core domain model — everything flows through these
@@ -84,10 +80,12 @@ lib/
     chunk.ts              The chunking algorithm
 
   tts/
+    kokoro.ts             The on-device neural voice: catalogue + worker bridge
+    kokoro.worker.ts      Kokoro-82M itself — ONNX inference, off the main thread
     webspeech.ts          Baseline provider (+ every Chrome/Safari workaround)
-    cloud.ts              OpenAI / ElevenLabs behind the same interface
+    buffered.ts           Playback for providers that return bytes, not speech
     cache.ts              Clip cache + prefetch — kills the gap between passages
-    registry.ts
+    registry.ts  use-model-state.ts
 
   player/engine.ts        Narrator: the playback state machine. Framework-free.
 
@@ -155,7 +153,9 @@ the book's title between every paragraph.
 
 1. Every speech engine has an undocumented ceiling. Chrome silently truncates
    long utterances; Safari drops them.
-2. Cloud APIs have hard per-request limits and per-request pricing.
+2. Neural models have hard input ceilings — Kokoro truncates past 510
+   phoneme tokens, silently, which is why the worker sub-splits again
+   before synthesis.
 3. **Chunks are the unit of seeking.** You cannot scrub into the middle of a
    Web Speech utterance — only start a new one. Small chunks are what make the
    scrubber feel continuous.
@@ -174,7 +174,7 @@ One interface (`lib/types.ts`):
 ```ts
 interface TTSProvider {
   id: ProviderId;
-  capabilities: { synthesize; boundaries; rate; pitch; needsKey };
+  capabilities: { synthesize; boundaries; rate; pitch; local };
   listVoices(): Promise<Voice[]>;
   speak(req, onBoundary?): SpeechHandle;      // live playback
   synthesize?(req): Promise<{ bytes; mime }>; // offline render → unlocks MP3
@@ -186,14 +186,51 @@ interface TTSProvider {
 audio bytes gets the deterministic export pipeline; one that cannot gets the
 realtime capture path, and the UI says which you are on.
 
-**To add a provider** (PlayHT, Cartesia, Azure, self-hosted Piper):
+**To add a provider:**
 
-1. Add a `case` to `synthesize()` in `app/api/tts/route.ts`.
-2. Add a `makeCloudProvider({...})` entry in `lib/tts/cloud.ts`.
-3. Register it in `lib/tts/registry.ts`.
+1. Implement `TTSProvider`. If it returns audio bytes, `lib/tts/buffered.ts`
+   already gives you live playback and an interpolated highlight cursor.
+2. Register it in `lib/tts/registry.ts`.
 
 Nothing else changes. The player, exporter, transcript generator and UI are
 all written against the interface.
+
+Note the `local` capability. Every provider that ships is `true`, and the UI
+promises as much to the reader — a hosted provider could not be added without
+contradicting that promise in code, which is the point of the flag.
+
+### 5. A studio voice with nobody's server in the loop
+
+`lib/tts/kokoro.worker.ts`. The model is [Kokoro-82M][kokoro] — 82 million
+parameters, StyleTTS2 architecture, Apache-2.0 — served as ONNX and run by
+`onnxruntime-web`. It is small enough to download once and good enough that
+the output is genuinely audiobook-grade.
+
+Three things this costs, and what is done about each:
+
+**The download.** ~86 MB at int8, fetched once from the Hugging Face CDN and
+kept in the browser's Cache API. int8 rather than fp32 (~326 MB) because on a
+public website the difference is not "slightly better quality", it is whether
+the visitor stays. It begins the moment a document is opened rather than on
+page load — nobody who is only looking around should pay 86 MB — so the wait
+usually overlaps with the reader finding their place.
+
+**The 510-token ceiling.** `KokoroTTS.generate` truncates longer input
+*silently*: hand it a paragraph and the end of it simply never gets spoken, with
+no error anywhere. So the worker splits again before synthesis — sentences
+first, then clause punctuation, then whitespace, each a worse place to breathe
+than the last and each still better than losing the words.
+
+**Backend roulette.** WebGPU is several times faster where it works and quietly
+broken where it does not — an adapter can exist and still fail on this graph,
+and it fails at *inference*, not at load. So the worker proves the path with a
+real generation before reporting ready, and falls back to WASM. A fallback
+costs a few seconds; not checking would cost a play button that does nothing.
+
+`onnxruntime`'s WASM binaries are copied into `public/ort` at install time and
+served from our own origin, so no third party sits on the critical path.
+
+[kokoro]: https://huggingface.co/hexgrad/Kokoro-82M
 
 ### 4. MP3 export
 
@@ -218,8 +255,10 @@ synthesize (network, bounded concurrency)
 
 Two properties worth calling out:
 
-- **Bounded concurrency.** Firing 4,000 fetches at once gets you rate-limited.
-  A small window runs ahead of the encoder.
+- **Bounded concurrency.** A small window runs ahead of the encoder. With an
+  on-device model the limit is memory and cores rather than a rate limiter —
+  the worker serializes inference anyway, since parallel ONNX sessions only
+  multiply peak memory.
 - **In-order encoding.** MP3 is a stream; frames must be appended in playback
   order. Synthesis happens out of order for speed, then a reorder buffer feeds
   the encoder strictly sequentially.
@@ -239,7 +278,7 @@ So there are exactly two honest paths to a file, and the app offers both:
 
 | | Studio render | Realtime capture |
 |---|---|---|
-| Providers | OpenAI, ElevenLabs | Any, including system voices |
+| Providers | Kokoro | Any, including system voices |
 | Speed | Faster than realtime | Takes as long as the book |
 | Accuracy | Sample-accurate timings | Recording of what played |
 | Browser | All | Chromium (`getDisplayMedia`) |
@@ -339,6 +378,37 @@ confirming that bytes came out.
   selection you just made.
 
 ---
+
+## Deploy
+
+The app is a standard Next.js build with no server-side secrets, no database
+and no API routes — every deployment target below is free.
+
+**Vercel** (zero config):
+
+1. Push the repo to GitHub.
+2. At [vercel.com](https://vercel.com), *Add New → Project*, import the repo.
+3. Deploy. Nothing to configure — there are no environment variables.
+
+**Cloudflare Pages / Netlify:** build `npm run build`, and use the platform's
+Next.js adapter. Both serve the `_headers` semantics described below.
+
+**Any Node host** (Railway, Render, Fly.io, a VPS): `npm ci && npm run build &&
+npm start`.
+
+### One thing worth getting right: cross-origin isolation
+
+`next.config.ts` sets `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: credentialless`. Together these make the page
+*cross-origin isolated*, which is what lets `onnxruntime-web` use
+`SharedArrayBuffer` and run WASM inference multi-threaded. Drop them and
+synthesis still works — single-threaded, and noticeably slower.
+
+This is the one reason to prefer a host that runs `next start` (or honors a
+`_headers` file) over a plain static file host. A static export via
+`output: "export"` would otherwise work fine — there is nothing dynamic left in
+the app — but Next.js cannot emit headers in that mode, so you would be
+serving the slow path.
 
 ## License
 

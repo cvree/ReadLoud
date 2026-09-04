@@ -75,7 +75,7 @@ export async function renderToMp3(
   if (!provider.synthesize) {
     throw new Error(
       `${provider.label} does not expose an audio stream, so it cannot be encoded offline. ` +
-        "Switch to a cloud voice for instant export, or use realtime tab capture.",
+        "Switch to the Kokoro engine for instant export, or use realtime tab capture.",
     );
   }
   if (chunks.length === 0) throw new Error("Nothing selected to export.");

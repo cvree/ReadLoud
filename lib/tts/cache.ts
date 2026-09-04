@@ -3,9 +3,9 @@
 
    Two jobs:
    1. Kill the gap between passages. Without a prefetch, every passage
-      boundary on a cloud voice costs a full round-trip of dead air
-      and the narration sounds like it is buffering. The engine warms
-      the next passage while the current one plays.
+      boundary costs a full synthesis of dead air and the narration
+      sounds like it is buffering. The engine warms the next passage
+      while the current one plays.
    2. Never pay twice. Scrubbing back over a passage, or exporting
       something you just listened to, reuses the bytes.
 

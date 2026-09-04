@@ -1,8 +1,8 @@
 /* ────────────────────────────────────────────────────────────────
    Audio decoding + resampling.
 
-   Providers return MP3 at whatever sample rate they like (OpenAI at
-   24 kHz, ElevenLabs at 44.1 kHz). LAME only accepts a fixed set of
+   Providers return audio at whatever sample rate they like (Kokoro
+   at 24 kHz). LAME only accepts a fixed set of
    MPEG sample rates and every chunk in one master must share a rate,
    so we normalize everything to a single target on the way in.
    ──────────────────────────────────────────────────────────────── */

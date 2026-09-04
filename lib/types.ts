@@ -74,7 +74,7 @@ export interface IngestProgress {
 
 /* ── TTS ─────────────────────────────────────────────────────── */
 
-export type ProviderId = "webspeech" | "openai" | "elevenlabs";
+export type ProviderId = "webspeech" | "kokoro";
 
 export interface Voice {
   id: string;
@@ -124,8 +124,13 @@ export interface ProviderCapabilities {
   /** Honors a rate multiplier natively. */
   rate: boolean;
   pitch: boolean;
-  /** Requires a server-side API key. */
-  needsKey: boolean;
+  /**
+   * Runs entirely on the reader's machine — no account, no key, no request
+   * ever leaves the browser. Every provider ReadLoud ships is `true`; the flag
+   * exists so the UI can promise it, and so a future hosted provider could not
+   * be added without contradicting the promise in code.
+   */
+  local: boolean;
 }
 
 export interface TTSProvider {

@@ -90,14 +90,15 @@ function qualityScore(v: SpeechSynthesisVoice): number {
 
 export const webSpeechProvider: TTSProvider = {
   id: "webspeech",
-  label: "System Voices",
-  blurb: "Built into your browser. Instant, private, free, works offline.",
+  label: "System voices",
+  blurb:
+    "Whatever your browser already ships. Nothing to download, starts instantly, but the voices are your operating system's.",
   capabilities: {
     synthesize: false,
     boundaries: true,
     rate: true,
     pitch: true,
-    needsKey: false,
+    local: true,
   },
 
   async isAvailable() {

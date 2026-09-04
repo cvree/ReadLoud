@@ -19,6 +19,7 @@ import type {
 } from "@/lib/types";
 import { Narrator, type NarratorState } from "@/lib/player/engine";
 import { getProvider, PROVIDERS } from "@/lib/tts/registry";
+import { preloadModel } from "@/lib/tts/kokoro";
 import { CHUNK_PRESETS, type ChunkPreset } from "@/lib/text/chunk";
 import { chunkDocument } from "@/lib/text/chunk";
 import { unlockAudio } from "@/lib/audio/decode";
@@ -103,7 +104,16 @@ interface Prefs {
 function loadPrefs(): Partial<Prefs> {
   if (typeof window === "undefined") return {};
   try {
-    return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Partial<Prefs>;
+    const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Partial<Prefs>;
+    // A browser that used an older build may have "openai" or "elevenlabs"
+    // stored here. `getProvider` throws on an unknown id, and it is read
+    // during the first render — long before `initProviders` could correct it —
+    // so a stale value has to be dropped on the way in, not on the way out.
+    if (prefs.providerId && !PROVIDERS.some((p) => p.id === prefs.providerId)) {
+      delete prefs.providerId;
+      delete prefs.voiceId;
+    }
+    return prefs;
   } catch {
     return {};
   }
@@ -134,11 +144,10 @@ function savePrefs(state: State) {
  * Guards against a stale voice list winning.
  *
  * `listVoices()` is async and can take seconds (Chrome populates
- * `speechSynthesis.getVoices()` lazily and we allow it up to 3s; ElevenLabs
- * is a network round-trip). If you switch providers while one is in flight,
- * the slower response would otherwise land last and overwrite the selection
- * you just made with the wrong provider's voices. Every call takes a ticket;
- * only the newest is allowed to commit.
+ * `speechSynthesis.getVoices()` lazily and we allow it up to 3s). If you switch
+ * providers while one is in flight, the slower response would otherwise land
+ * last and overwrite the selection you just made with the wrong provider's
+ * voices. Every call takes a ticket; only the newest is allowed to commit.
  */
 let providerGeneration = 0;
 
@@ -160,7 +169,7 @@ export const useStore = create<State>((set, get) => {
     ingestError: null,
 
     player: narrator.getState(),
-    providerId: prefs.providerId ?? "webspeech",
+    providerId: prefs.providerId ?? "kokoro",
     availableProviders: ["webspeech"],
     voices: [],
     voiceId: prefs.voiceId ?? "",
@@ -186,6 +195,12 @@ export const useStore = create<State>((set, get) => {
       if (doc) {
         narrator.load(doc.chunks);
         set({ view: "reader" });
+        // Somebody who has just opened a book is going to press play. Start
+        // fetching the model now so the wait overlaps with them finding their
+        // place, rather than landing between the press and the first word.
+        // Deliberately not done on page load: an 86 MB download is not
+        // something to spend on a visitor who is only looking around.
+        if (get().providerId === "kokoro") preloadModel();
       } else {
         narrator.load([]);
       }
@@ -225,11 +240,9 @@ export const useStore = create<State>((set, get) => {
       const voices = await provider.listVoices();
       if (generation !== providerGeneration) return; // superseded
 
-      const voiceId =
-        voices.find((v) => v.id === remembered)?.id ??
-        voices.find((v) => v.tag === "Premium")?.id ??
-        voices[0]?.id ??
-        "";
+      // Each provider lists its voices best-first, so index 0 is the right
+      // default for anyone who has not chosen one.
+      const voiceId = voices.find((v) => v.id === remembered)?.id ?? voices[0]?.id ?? "";
       set({ voices, voiceId });
       narrator.update({ providerId: id, voiceId });
       persist();

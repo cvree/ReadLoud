@@ -7,6 +7,7 @@
 import { useMemo, useState } from "react";
 import { useStore, primeAudio } from "@/lib/store";
 import { PROVIDERS, getProvider } from "@/lib/tts/registry";
+import { useModelState } from "@/lib/tts/use-model-state";
 import { CHUNK_PRESETS, type ChunkPreset } from "@/lib/text/chunk";
 import { Button, Field, Segmented, Select, Slider, Switch } from "./ui/Primitives";
 import { Mic, Play, Sparkle, Warning } from "./ui/Icons";
@@ -42,6 +43,8 @@ export function VoiceStudio() {
 
   const [previewing, setPreviewing] = useState(false);
   const provider = getProvider(providerId);
+  // Which backend Kokoro settled on — WebGPU or WASM — once it is running.
+  const device = useModelState().device;
 
   const voiceOptions = useMemo(
     () =>
@@ -115,7 +118,7 @@ export function VoiceStudio() {
                 )}
                 {!enabled && (
                   <span className="ml-auto text-[10px] font-medium text-ink-500">
-                    add API key
+                    unsupported here
                   </span>
                 )}
               </div>
@@ -124,6 +127,8 @@ export function VoiceStudio() {
           );
         })}
       </div>
+
+      {providerId === "kokoro" && <ModelStatus />}
 
       <div className="my-4 h-px bg-[var(--hairline)]" />
 
@@ -161,8 +166,8 @@ export function VoiceStudio() {
           <p className="text-[11px] leading-snug text-ember-400">
             This browser reports no installed speech voices. On Linux install
             speech-dispatcher and a voice package; on Windows and macOS add one in
-            the system accessibility settings. Or add a cloud key for studio voices
-            with no OS dependency.
+            the system accessibility settings. Or switch to Kokoro, which brings its
+            own voices and needs nothing from the operating system.
           </p>
         </div>
       )}
@@ -279,8 +284,8 @@ export function VoiceStudio() {
       <div className="mt-5 flex items-start gap-2 rounded-xl border border-[var(--hairline)] px-3 py-2.5">
         <Sparkle width={14} height={14} className="mt-0.5 shrink-0 text-iris-400" />
         <p className="text-[11px] leading-snug text-ink-400">
-          Preferences persist locally. Documents never leave your browser unless you
-          choose a cloud voice, in which case only the text being spoken is sent.
+          Every voice here runs on this machine. Nothing you open — and nothing that
+          gets spoken — is ever sent anywhere. Preferences persist locally.
         </p>
       </div>
 
@@ -288,8 +293,73 @@ export function VoiceStudio() {
         <Mic width={13} height={13} className="mt-0.5 shrink-0" />
         <span>
           Engine: <span className="text-ink-300">{provider.label}</span>
+          {providerId === "kokoro" && device && (
+            <span className="text-ink-500"> · {device}</span>
+          )}
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * The state of the on-device model, in the one place a reader would look for it.
+ *
+ * An 86 MB download that happens silently between pressing play and hearing
+ * anything reads as a hang, so the bar is not decoration: it is the difference
+ * between "this is broken" and "this is working".
+ */
+function ModelStatus() {
+  const model = useModelState();
+
+  if (model.phase === "ready") {
+    return (
+      <div className="mt-2 flex items-center gap-2 rounded-lg border border-[color-mix(in_oklab,var(--color-mint-500)_28%,transparent)] bg-[color-mix(in_oklab,var(--color-mint-500)_8%,transparent)] px-2.5 py-2">
+        <Sparkle width={13} height={13} className="shrink-0 text-mint-500" />
+        <p className="text-[11px] leading-snug text-ink-300">
+          Voice model loaded and cached. It works offline from here.
+        </p>
+      </div>
+    );
+  }
+
+  if (model.phase === "error") {
+    return (
+      <div className="mt-2 flex gap-2 rounded-lg border border-[color-mix(in_oklab,var(--color-ember-500)_28%,transparent)] bg-[color-mix(in_oklab,var(--color-ember-500)_8%,transparent)] px-2.5 py-2">
+        <Warning width={13} height={13} className="mt-0.5 shrink-0 text-ember-500" />
+        <p className="text-[11px] leading-snug text-ember-400">
+          {model.detail || "The voice model could not start."}{" "}
+          <span className="text-ink-400">
+            System voices still work in the meantime.
+          </span>
+        </p>
+      </div>
+    );
+  }
+
+  if (model.phase === "loading") {
+    return (
+      <div className="mt-2 rounded-lg border border-[var(--hairline)] px-2.5 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-ink-300">{model.detail}</p>
+          <span className="shrink-0 text-[10px] tabular-nums text-ink-500">
+            {Math.round(model.ratio * 100)}%
+          </span>
+        </div>
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[color-mix(in_oklab,white_8%,transparent)]">
+          <div
+            className="h-full rounded-full bg-iris-400 transition-[width] duration-300"
+            style={{ width: `${Math.max(2, model.ratio * 100)}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <p className="mt-2 px-0.5 text-[11px] leading-snug text-ink-500">
+      Downloads once (~86 MB) the first time you press play, then runs offline
+      forever. Nothing is sent anywhere.
+    </p>
   );
 }
