@@ -1,17 +1,22 @@
 # Builds ReadLoud as a static site and publishes it to GitHub Pages.
 #
 # There is nothing to configure and no secret to add: the app has no server,
-# no database and no API keys. `configure-pages` turns Pages on the first
-# time this runs, and reports the subdirectory the site will be served from
-# (/<repo>/) — which the build needs, because a project page is not served
-# from the root.
+# no database and no API keys.
+#
+# One thing has to be switched on by hand, once, by someone with admin on the
+# repository — Settings → Pages → Build and deployment → Source: GitHub
+# Actions. A workflow token is not allowed to create a Pages site itself
+# ("Resource not accessible by integration"), so until that is done the
+# `deploy` job below fails and says so. The `build` job does not depend on it,
+# which keeps the signal on the code honest either way.
 name: Deploy to GitHub Pages
 
 on:
   push:
     branches:
       - main
-      # So a working branch can be seen live before it is merged.
+      # So a working branch can be seen live before it is merged. Safe to
+      # drop once this is on main.
       - "claude/**"
   workflow_dispatch:
 
@@ -44,16 +49,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-      - name: Configure Pages
-        id: pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
       - name: Build static export
         run: npm run build:static
         env:
-          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          # A project page is served from /<repo>/, and three URLs the bundler
+          # never sees need that prefix. Taken from the repo name rather than
+          # from the Pages API so the build does not depend on Pages being on.
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
 
       # Without this, Pages runs the output through Jekyll, which drops every
       # path beginning with an underscore — which is all of Next's assets.
@@ -71,5 +73,20 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Configure Pages
+        id: configure
+        uses: actions/configure-pages@v5
+        with:
+          # Works where the token is allowed to create the site; where it is
+          # not, the next step explains what to click.
+          enablement: true
+
+      - name: Explain what is missing
+        if: failure() && steps.configure.outcome == 'failure'
+        run: |
+          echo "::error title=GitHub Pages is not switched on::Open Settings -> Pages, set 'Source' to 'GitHub Actions', then re-run this workflow. A workflow token cannot create the Pages site itself."
+          exit 1
+
+      - name: Deploy
+        id: deployment
         uses: actions/deploy-pages@v4
