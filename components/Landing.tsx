@@ -7,8 +7,9 @@ import { useStore } from "@/lib/store";
 import { ingestFile, ingestText, MAX_FILE_BYTES, formatBytes } from "@/lib/ingest";
 import { CHUNK_PRESETS } from "@/lib/text/chunk";
 import { SAMPLE_TEXT } from "@/lib/sample";
+import { LinkImport } from "./LinkImport";
 import { Button, Progress } from "./ui/Primitives";
-import { Book, Bolt, Doc, Download, Sparkle, Text, Upload, Waveform } from "./ui/Icons";
+import { Book, Bolt, Doc, Download, Play, Sparkle, Text, Upload, Waveform } from "./ui/Icons";
 
 export function Landing() {
   const setDocument = useStore((s) => s.setDocument);
@@ -20,6 +21,7 @@ export function Landing() {
   const toast = useStore((s) => s.toast);
 
   const [hot, setHot] = useState(false);
+  const [linking, setLinking] = useState(false);
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,7 +87,7 @@ export function Landing() {
         <div className="animate-rise text-center">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[var(--hairline)] bg-[color-mix(in_oklab,white_4%,transparent)] px-3.5 py-1.5 text-[11.5px] font-medium text-ink-300">
             <Sparkle width={13} height={13} className="text-iris-400" />
-            PDF, EPUB, Markdown and plain text - parsed entirely in your browser
+            PDF, EPUB, subtitles, YouTube - parsed entirely in your browser
           </div>
           <h1 className="text-[clamp(2.4rem,6vw,3.9rem)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance">
             <span className="grad-text">Give anything you read</span>
@@ -143,12 +145,17 @@ export function Landing() {
                 Drop a document here
               </p>
               <p className="mt-1.5 text-[13px] text-ink-400">
-                PDF, EPUB, TXT, Markdown or HTML - up to {formatBytes(MAX_FILE_BYTES)}
+                PDF, EPUB, TXT, Markdown, HTML or subtitles (SRT, VTT) - up to{" "}
+                {formatBytes(MAX_FILE_BYTES)}
               </p>
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
                 <Button variant="primary" size="lg" onClick={() => inputRef.current?.click()}>
                   <Doc width={16} height={16} />
                   Choose a file
+                </Button>
+                <Button size="lg" onClick={() => setLinking(true)}>
+                  <Play width={15} height={15} />
+                  YouTube
                 </Button>
                 <Button size="lg" onClick={() => setPasting((v) => !v)}>
                   <Text width={16} height={16} />
@@ -162,7 +169,7 @@ export function Landing() {
               <input
                 ref={inputRef}
                 type="file"
-                accept=".pdf,.epub,.txt,.md,.markdown,.html,.htm,.xhtml,application/pdf,application/epub+zip,text/plain,text/markdown,text/html"
+                accept=".pdf,.epub,.txt,.md,.markdown,.html,.htm,.xhtml,.vtt,.srt,.sbv,.ttml,.dfxp,application/pdf,application/epub+zip,text/plain,text/markdown,text/html,text/vtt"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files?.length) void handleFiles(e.target.files);
@@ -178,7 +185,7 @@ export function Landing() {
                 autoFocus
                 value={pasted}
                 onChange={(e) => setPasted(e.target.value)}
-                placeholder="Paste an article, a chapter, a transcript, anything."
+                placeholder="Paste an article, a chapter, a transcript, anything. A copied YouTube transcript is recognised on sight."
                 rows={7}
                 className="ring-focus scroll-fine w-full resize-y rounded-xl border border-[var(--hairline)] bg-[var(--field)] p-3.5 font-serif text-[14px] leading-relaxed text-ink-100 placeholder:text-ink-500"
               />
@@ -201,11 +208,16 @@ export function Landing() {
         </div>
 
         {/* Capability strip */}
-        <div className="animate-rise mt-8 grid gap-3 sm:grid-cols-3" style={{ animationDelay: "160ms" }}>
+        <div className="animate-rise mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" style={{ animationDelay: "160ms" }}>
           <Capability
             icon={<Bolt width={16} height={16} />}
             title="Built for scale"
             body="pdf.js streams page by page and releases each one, so a 1,200-page scan never fills memory."
+          />
+          <Capability
+            icon={<Play width={15} height={15} />}
+            title="Talks, lectures, videos"
+            body="Subtitle files and YouTube transcripts, with the punctuation auto-captions leave out put back from the pauses."
           />
           <Capability
             icon={<Waveform width={16} height={16} />}
@@ -223,6 +235,7 @@ export function Landing() {
           Nothing is uploaded. Parsing, highlighting and encoding all happen in this tab.
         </p>
       </div>
+      <LinkImport open={linking} onClose={() => setLinking(false)} />
     </div>
   );
 }

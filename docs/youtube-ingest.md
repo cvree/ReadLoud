@@ -1,6 +1,7 @@
 # Getting a YouTube transcript into ReadLoud
 
-**Status:** research + plan. Nothing built.
+**Status:** built. Paths 1-3 below shipped; see `lib/ingest/captions.ts`,
+`lib/ingest/youtube.ts` and `public/readloud-helper.user.js`.
 **Question:** can a user paste a YouTube URL and have ReadLoud read the video aloud?
 **Short answer:** yes — but not by scraping YouTube from our server, and the
 reason is new.
@@ -61,33 +62,34 @@ So: a bookmarklet (or userscript) that runs *on the YouTube page*, where the
 caption URL is same-origin and already carries a live token, and hands the text
 to ReadLoud.
 
-```js
-// Bookmarklet, unminified. Runs on youtube.com — same origin, so no CORS,
-// and the baseUrl already carries whatever token the player minted.
-(async () => {
-  const r = window.ytInitialPlayerResponse;
-  const tracks = r?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-  const track = tracks.find(t => t.languageCode === "en") ?? tracks[0];
-  if (!track) return alert("This video has no caption track.");
+The helper reads `ytInitialPlayerResponse.captions`, fetches the caption URL
+same-origin (it already carries whatever token the player minted), and hands the
+result back.
 
-  const xml  = await (await fetch(track.baseUrl + "&fmt=json3")).text();
-  const cues = JSON.parse(xml).events ?? [];
-  const title = document.title.replace(/ - YouTube$/, "");
+> **One thing the plan got wrong.** The obvious transport — the helper posting
+> to `window.opener` — does not work here. `next.config.ts` sets
+> `Cross-Origin-Opener-Policy: same-origin` to keep the page cross-origin
+> isolated, which is what lets onnxruntime run WASM inference multi-threaded
+> (see the README's deploy section). That header also severs the opener
+> relationship across origins. Making every reader's synthesis slower in order
+> to import a transcript is a bad trade, so the transport changed rather than
+> the header:
+>
+> ```
+> tab A (ReadLoud)  ──opens──▶  tab B (youtube.com)
+>                                 helper reads the captions
+> tab A  ◀──BroadcastChannel──  tab B, navigated back to our origin
+>                                 with the payload gzipped into its hash
+> ```
+>
+> URL fragments are never sent to a server, and the relay is same-origin, so
+> COOP never applies. If no tab is listening — the original was closed — the
+> courier tab keeps the transcript and opens it itself, so the work is never
+> lost.
 
-  // Handshake: the opened tab announces itself, we reply with the payload.
-  const win = window.open("https://readloud.app/#from-youtube", "readloud");
-  addEventListener("message", e => {
-    if (e.origin === "https://readloud.app" && e.data === "readloud:ready") {
-      win.postMessage({ kind: "youtube-transcript", title, cues },
-                      "https://readloud.app");
-    }
-  });
-})();
-```
-
-ReadLoud's side is ~15 lines: on `#from-youtube`, post `readloud:ready` to
-`window.opener`, listen for the reply, **check `e.origin === "https://www.youtube.com"`**,
-and run the payload through the caption-repair pass into `ingestText`.
+The payload is validated on arrival rather than trusted: version, video id
+shape, cue count and per-cue types are all checked, because it comes from a
+script running on another origin.
 
 | | |
 |---|---|
@@ -113,9 +115,9 @@ Ordered by what I'd ship, not by what sounds best.
 
 | | Path | Server | Key | Reliability | Effort |
 |---|---|---|---|---|---|
-| **1** | **Paste the transcript panel.** YouTube's own *Show transcript* → select → paste. Parse `0:12` / `1:02:33` line prefixes. | none | none | **total** | ~half a day |
-| **2** | **Caption files.** `.vtt` `.srt` `.sbv` `.ttml` dropped on the existing dropzone. | none | none | **total** | ~half a day |
-| **3** | **Bookmarklet / userscript.** Section 2. | none | none | high | ~1 day |
+| **1** | **Paste the transcript panel.** YouTube's own *Show transcript* → select → paste. Parse `0:12` / `1:02:33` line prefixes. | none | none | **total** | ✅ shipped |
+| **2** | **Caption files.** `.vtt` `.srt` `.sbv` `.ttml` dropped on the existing dropzone. | none | none | **total** | ✅ shipped |
+| **3** | **Bookmarklet / userscript.** Section 2. | none | none | high | ✅ shipped |
 | **4** | **BYO hosted API key.** User pastes their own key from a transcript vendor; stored in `localStorage`, never ours. URL paste works for those who opt in. | none | user's | vendor's | ~1 day |
 | **5** | **Our own route handler + scraper.** | yes | — | **poor, degrading** | ~2 days, then forever |
 
@@ -160,8 +162,12 @@ RSVP has no punctuation to breathe on.
 5. **Keep the timings.** `CaptionCue` carries them through ingestion, which
    leaves video-synced RSVP open later.
 
-`lib/ingest/captions.ts`, ~300 lines, most of it repair. This is shared by all
-five paths, so it is worth building first regardless of which one wins.
+`lib/ingest/captions.ts`. Shared by every path above, and covered by `npm test`
+— including the case the first implementation got wrong: **contiguous tracks**,
+where every cue starts exactly where the last ended. There are no gaps to key
+off at all, and a purely gap-driven pass emits one run-on the length of the
+video. A run that goes too long now gets a break anyway, placed at the best
+scoring boundary rather than wherever the counter ran out.
 
 ---
 
@@ -185,17 +191,23 @@ isn't a YouTube feature. Worth scoping separately.
 
 ---
 
-## 6. Recommendation
+## 6. What shipped, and what is left
 
-1. `lib/ingest/captions.ts` + the repair pass — shared by everything.
-2. Paste-the-panel and caption-file drop. Zero risk, immediate.
-3. The bookmarklet + the `postMessage` receiver. This is "paste a URL" done
-   better, and it is the only path that reaches members-only videos.
-4. BYO-key URL paste, if you want literal URL-paste for people who'll pay for it.
-5. Our own scraper only if 3 and 4 both prove insufficient — and built to fail
-   gracefully when it does.
+Shipped: the caption pipeline and repair pass, subtitle-file ingestion, the
+paste path (a copied transcript is recognised on sight, so the existing paste
+box handles it), the bookmarklet, the userscript, and the two-tab relay.
 
-Whisper-on-device is a separate, good feature for local media files.
+Left, in the order I would take them:
+
+1. **A real video to test against.** Everything here is verified against
+   synthetic fixtures and a scripted browser; `www.youtube.com` was blocked by
+   the egress policy of the session that built it, so the helper's contact with
+   the live page is the one part not exercised end to end.
+2. **BYO-key URL paste**, if literal URL-paste matters for people who will pay
+   for it.
+3. **Whisper on-device** for local media files — a separate, good feature, and
+   the honest answer to "what about videos with no captions".
+4. Our own scraper only if 1-3 prove insufficient.
 
 **Sources:** [youtube-transcript-api #592](https://github.com/jdepoix/youtube-transcript-api/issues/592) ·
 [YouTube.js #1102](https://github.com/LuanRT/YouTube.js/issues/1102) ·

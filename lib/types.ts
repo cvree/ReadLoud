@@ -5,7 +5,7 @@
    pipeline consumes `RenderedChunk[]`.
    ──────────────────────────────────────────────────────────────── */
 
-export type SourceKind = "pdf" | "epub" | "txt" | "md" | "html" | "paste";
+export type SourceKind = "pdf" | "epub" | "txt" | "md" | "html" | "paste" | "captions";
 
 /** A logical division of the source — a PDF page, an EPUB spine item, etc. */
 export interface Section {
@@ -63,6 +63,21 @@ export interface Document {
     /** Non-fatal issues worth surfacing (scanned pages, broken spine items). */
     warnings: string[];
   };
+}
+
+/**
+ * One line of a caption track, with the timings it arrived with.
+ *
+ * The timings survive ingestion rather than being discarded at the door:
+ * they are what lets `repairCaptions` tell a sentence break from a line
+ * break on a track that has no punctuation, and they leave the door open to
+ * pacing a read-along against the original video later.
+ */
+export interface CaptionCue {
+  /** Seconds from the start of the media. */
+  start: number;
+  end: number;
+  text: string;
 }
 
 export interface IngestProgress {
