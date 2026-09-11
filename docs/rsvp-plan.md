@@ -318,6 +318,18 @@ ordering with capture-phase handlers, its handler early-returns when
 
 Worth doing, and the hard part is not parsing.
 
+> **Superseded by [`youtube-ingest.md`](./youtube-ingest.md).** The research
+> below was written before checking the current state of YouTube's caption
+> endpoints. It is wrong in one important way: option C is not merely a privacy
+> trade-off that would at least work. Since YouTube added proof-of-origin (PO)
+> tokens, a server-side scrape is also *unreliable* — and datacenter IPs, which
+> is every host ReadLoud would deploy to, are challenged first. The path that
+> works is a bookmarklet running in the reader's own logged-in browser, where
+> the caption URL is same-origin and already carries a live token. See the
+> other document for the evidence and the full ladder.
+
+### The constraint
+
 ### The constraint
 
 **A browser cannot fetch a YouTube transcript.** Neither `youtube.com/watch` nor
@@ -446,8 +458,11 @@ the group), per-document resume, and the video-sync mode if captions land well.
 3. **D3 — Does RSVP get a `ViewMode`, or is it an overlay?** Recommend overlay:
    it is a mode of reading, not a third pane, and it must be able to cover the
    sidebars.
-4. **D4 — YouTube option C.** A server route handler is a product decision
-   about the privacy promise, not an engineering one. Recommend not now.
+4. **D4 — YouTube option C.** *Revised.* Not just a privacy decision: since PO
+   tokens, a server-side scrape is unreliable on exactly the hosts we would
+   deploy to. Recommend the bookmarklet path instead — it needs no server, no
+   key, and reaches members-only videos no scraper can. See
+   [`youtube-ingest.md`](./youtube-ingest.md).
 5. **D5 — Voice-synced as the default mode on first open?** It is the
    differentiated one and the honest one; it is also slower, which may read as
    "this isn't speed reading." Recommend defaulting to voice-synced with the
