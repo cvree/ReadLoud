@@ -22,6 +22,7 @@
 import type { IngestProgress } from "@/lib/types";
 import { stripRunningFurniture } from "@/lib/text/normalize";
 import type { Part } from "@/lib/text/assemble";
+import { asset } from "@/lib/base-path";
 
 /**
  * We import the LEGACY build, not the default one.
@@ -45,7 +46,8 @@ async function loadPdfJs(): Promise<PdfModule> {
   if (pdfjs) return pdfjs;
   const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
   // `scripts/copy-pdf-worker.mjs` places the matching worker here on install.
-  mod.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  // `asset()` so a subdirectory deployment resolves it correctly.
+  mod.GlobalWorkerOptions.workerSrc = asset("/pdf.worker.min.mjs");
   pdfjs = mod;
   return mod;
 }

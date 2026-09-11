@@ -21,6 +21,9 @@ import {
 
 const RATES = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
+/** Shown once, ever, to whoever has not pressed play here before. */
+const HINT_KEY = "readloud.hint.play.v1";
+
 export function Transport() {
   const doc = useStore((s) => s.doc);
   // Deliberately field-by-field rather than `s.player`: that object is
@@ -45,6 +48,50 @@ export function Transport() {
   const [muted, setMuted] = useState(false);
   const lastVolume = useRef(volume);
 
+  /* The speed menu used to open on hover only, which meant it could not be
+     opened by touch at all and not by keyboard either. Click to open. */
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const speedRoot = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!speedOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!speedRoot.current?.contains(e.target as Node)) setSpeedOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSpeedOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [speedOpen]);
+
+  /* A first-timer looking at a wall of text and a play button does not know
+     that the spacebar works. Say so once, then never again. */
+  const [hint, setHint] = useState(false);
+  const toastCount = useStore((s) => s.toasts.length);
+  useEffect(() => {
+    // No spacebar on a touch device, and the play button is right there
+    // under the thumb — the hint would be noise rather than help.
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    try {
+      if (!localStorage.getItem(HINT_KEY)) setHint(true);
+    } catch {
+      /* private browsing: no hint rather than a hint on every load */
+    }
+  }, []);
+  const dismissHint = useCallback(() => {
+    setHint(false);
+    try {
+      localStorage.setItem(HINT_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // The timeline starts as a words-per-minute estimate and is replaced with
   // measured durations as passages are heard. Say which one you are looking at
   // rather than presenting a guess as a fact.
@@ -56,10 +103,11 @@ export function Transport() {
   const duration = rawDuration || 1;
 
   const onPlay = useCallback(async () => {
+    dismissHint();
     // Safari and Chrome both require a gesture before audio may start.
     await primeAudio();
     narrator.toggle();
-  }, [narrator]);
+  }, [narrator, dismissHint]);
 
   /* Keyboard shortcuts. Skipped while typing in an input. */
   useEffect(() => {
@@ -138,7 +186,7 @@ export function Transport() {
   return (
     <div className="glass-strong relative z-20 shrink-0 rounded-t-2xl">
       {/* Scrub track */}
-      <div className="relative px-5 pt-3">
+      <div className="relative px-4 pt-3 sm:px-5">
         {scrubChunk && (
           <div
             className="glass-strong animate-fade pointer-events-none absolute -top-16 z-30 max-w-sm rounded-xl px-3 py-2"
@@ -187,10 +235,17 @@ export function Transport() {
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-2 px-5 pt-1 pb-4">
+      <div className="flex items-center gap-1.5 px-3 pt-1 pb-4 sm:gap-2 sm:px-5">
         {/* Left: position in the document */}
         <div className="flex flex-1 items-center gap-2">
-          <Button variant="bare" size="icon" onClick={() => narrator.jump(0)} title="Back to start">
+          <Button
+            variant="bare"
+            size="icon"
+            onClick={() => narrator.jump(0)}
+            title="Back to start"
+            aria-label="Back to start"
+            className="hidden sm:inline-flex"
+          >
             <SkipBack width={16} height={16} />
           </Button>
           <span className="tabular hidden text-[11.5px] text-ink-500 sm:inline">
@@ -206,6 +261,8 @@ export function Transport() {
             size="icon"
             onClick={() => narrator.previous()}
             title="Previous passage (Shift+Left)"
+            aria-label="Previous passage"
+            className="hidden sm:inline-flex"
           >
             <SkipBack width={18} height={18} />
           </Button>
@@ -213,14 +270,26 @@ export function Transport() {
             <Back15 width={20} height={20} />
           </Button>
 
-          <button
-            onClick={onPlay}
-            aria-label={playing ? "Pause" : "Play"}
-            className={`ring-focus btn btn-primary mx-1 rounded-full ${busy ? "pulse-ring" : ""}`}
-            style={{ height: 52, width: 52 }}
-          >
-            {playing ? <Pause width={20} height={20} /> : <Play width={20} height={20} />}
-          </button>
+          <div className="relative mx-1">
+            {hint && status === "idle" && toastCount === 0 && (
+              <div className="animate-rise glass-strong pointer-events-none absolute bottom-full left-1/2 mb-3 w-max max-w-[70vw] -translate-x-1/2 rounded-xl px-3 py-2 text-center">
+                <div className="text-[12px] font-medium text-ink-100">
+                  Press play — or just hit space
+                </div>
+                <div className="mt-0.5 text-[11px] text-ink-400">
+                  The neural voice downloads once, then works offline.
+                </div>
+              </div>
+            )}
+            <button
+              onClick={onPlay}
+              aria-label={playing ? "Pause" : "Play"}
+              className={`ring-focus btn btn-primary rounded-full ${busy ? "pulse-ring" : ""}`}
+              style={{ height: 52, width: 52 }}
+            >
+              {playing ? <Pause width={20} height={20} /> : <Play width={20} height={20} />}
+            </button>
+          </div>
 
           <Button variant="bare" size="icon" onClick={() => narrator.nudge(15)} title="Forward 15 seconds (Right)">
             <Forward15 width={20} height={20} />
@@ -230,6 +299,8 @@ export function Transport() {
             size="icon"
             onClick={() => narrator.next()}
             title="Next passage (Shift+Right)"
+            aria-label="Next passage"
+            className="hidden sm:inline-flex"
           >
             <SkipForward width={18} height={18} />
           </Button>
@@ -237,35 +308,44 @@ export function Transport() {
 
         {/* Right: output settings */}
         <div className="flex flex-1 items-center justify-end gap-1">
-          <div className="group relative">
+          <div ref={speedRoot} className="relative">
             <Button
               variant="ghost"
               size="sm"
               className="tabular w-[62px] gap-1"
-              onClick={() => {
-                const i = RATES.findIndex((r) => r >= rate);
-                setRate(RATES[(i + 1) % RATES.length]);
-              }}
+              onClick={() => setSpeedOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={speedOpen}
               title="Playback speed ([ and ])"
             >
               <Bolt width={12} height={12} className="text-ember-500" />
               {rate}x
             </Button>
-            <div className="glass-strong pointer-events-none absolute right-0 bottom-full mb-2 flex origin-bottom-right scale-95 flex-col gap-0.5 rounded-xl p-1 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:scale-100 group-hover:opacity-100">
-              {RATES.map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setRate(r)}
-                  className={`tabular rounded-lg px-3 py-1.5 text-left text-[12.5px] transition-colors ${
-                    r === rate
-                      ? "bg-[color-mix(in_oklab,var(--color-iris-500)_28%,transparent)] text-white"
-                      : "text-ink-300 hover:bg-[color-mix(in_oklab,white_8%,transparent)]"
-                  }`}
-                >
-                  {r}x
-                </button>
-              ))}
-            </div>
+            {speedOpen && (
+              <div
+                role="menu"
+                className="glass-strong animate-fade absolute right-0 bottom-full z-40 mb-2 flex flex-col gap-0.5 rounded-xl p-1"
+              >
+                {RATES.map((r) => (
+                  <button
+                    key={r}
+                    role="menuitemradio"
+                    aria-checked={r === rate}
+                    onClick={() => {
+                      setRate(r);
+                      setSpeedOpen(false);
+                    }}
+                    className={`ring-focus tabular rounded-lg px-3 py-1.5 text-left text-[12.5px] transition-colors ${
+                      r === rate
+                        ? "bg-[color-mix(in_oklab,var(--color-iris-500)_28%,transparent)] text-white"
+                        : "text-ink-300 hover:bg-[color-mix(in_oklab,white_8%,transparent)]"
+                    }`}
+                  >
+                    {r}x
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="hidden items-center gap-1.5 sm:flex">
@@ -286,18 +366,27 @@ export function Transport() {
             />
           </div>
 
-          <div className="mx-1.5 h-6 w-px bg-[var(--hairline)]" />
+          <div className="mx-1.5 hidden h-6 w-px bg-[var(--hairline)] sm:block" />
 
           <Button
             variant="bare"
             size="icon"
             onClick={() => setFocusMode(!focusMode)}
             title="Focus mode (F)"
-            className={focusMode ? "text-iris-400" : ""}
+            aria-label="Focus mode"
+            aria-pressed={focusMode}
+            className={`hidden sm:inline-flex ${focusMode ? "text-iris-400" : ""}`}
           >
             <Focus width={18} height={18} />
           </Button>
-          <Button variant="primary" size="sm" onClick={() => setExportOpen(true)} className="gap-1.5">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setExportOpen(true)}
+            className="gap-1.5"
+            title="Export an MP3 or a transcript"
+            aria-label="Export an MP3 or a transcript"
+          >
             <Download width={15} height={15} />
             <span className="hidden md:inline">Export</span>
           </Button>

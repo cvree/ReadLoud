@@ -89,13 +89,16 @@ export function Reader() {
       onScroll={onScroll}
       className={`scroll-fine relative h-full overflow-y-auto ${focusMode ? "focus-dim" : ""}`}
     >
-      <div className="mx-auto max-w-[74ch] px-6 pt-10 pb-[42vh] sm:px-10">
+      <div className="mx-auto max-w-[74ch] px-4 pt-8 pb-[42vh] sm:px-10 sm:pt-10">
         <DocumentHeader />
 
         <div
           className="font-serif"
           style={{
-            fontSize: `${1.115 * fontScale}rem`,
+            // Scales down on a narrow screen so a phone gets a line of prose
+            // rather than four words, and the reader's own size preference
+            // still multiplies whatever the viewport settled on.
+            fontSize: `calc(${fontScale} * clamp(0.98rem, 0.9rem + 0.55vw, 1.115rem))`,
             lineHeight: 1.72,
             letterSpacing: "-0.003em",
           }}
@@ -120,6 +123,17 @@ export function Reader() {
 
 /* ── Document header ────────────────────────────────────────── */
 
+/** What the parser called the source, in words a reader would use. */
+const KIND_LABEL: Record<string, string> = {
+  pdf: "PDF",
+  epub: "EPUB",
+  txt: "Text",
+  md: "Markdown",
+  html: "Web page",
+  paste: "Pasted text",
+  captions: "Transcript",
+};
+
 function DocumentHeader() {
   const doc = useStore((s) => s.doc);
   if (!doc) return null;
@@ -127,7 +141,9 @@ function DocumentHeader() {
   return (
     <header className="animate-rise mb-10">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold tracking-[0.09em] text-ink-400 uppercase">
-        <span className="rounded-md border border-[var(--hairline)] px-2 py-0.5">{doc.kind}</span>
+        <span className="rounded-md border border-[var(--hairline)] px-2 py-0.5">
+          {KIND_LABEL[doc.kind] ?? doc.kind}
+        </span>
         {doc.meta.pages && <span>{doc.meta.pages.toLocaleString()} pages</span>}
         <span>{doc.meta.words.toLocaleString()} words</span>
         <span>{doc.chunks.length.toLocaleString()} passages</span>

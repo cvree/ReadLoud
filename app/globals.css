@@ -262,6 +262,35 @@ body {
   color: color-mix(in oklab, var(--color-ink-300) 62%, transparent);
 }
 
+/* Double-clicking a passage starts reading from it — a genuinely useful
+   gesture that was documented only in a `title` attribute. On a pointer
+   device the passage now says so on hover, with a play glyph in the margin
+   and a faint wash. Purely decorative, so it is ::before rather than an
+   element: 2,700 extra buttons would undo the whole re-render story. */
+@media (hover: hover) and (pointer: fine) {
+  .passage:not(.passage-active):hover {
+    background: color-mix(in oklab, white 4%, transparent);
+    cursor: pointer;
+  }
+  :root[data-theme="light"] .passage:not(.passage-active):hover {
+    background: color-mix(in oklab, black 3%, transparent);
+  }
+  .passage:not(.passage-active)::before {
+    content: "";
+    position: absolute;
+    top: 0.95em;
+    left: -1.05rem;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 5px 0 5px 8px;
+    border-color: transparent transparent transparent var(--color-iris-400);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-out-soft);
+  }
+  .passage:not(.passage-active):hover::before { opacity: 0.75; }
+}
+
 /* The sentence currently being spoken gets a soft bed... */
 .sentence-active {
   background: color-mix(in oklab, var(--color-ember-500) 9%, transparent);
@@ -311,108 +340,110 @@ body {
   filter: blur(0.6px);
 }
 
-/* ── Controls ─────────────────────────────────────────────────── */
+@layer components {
+  /* ── Controls ─────────────────────────────────────────────────── */
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  border-radius: 0.7rem;
-  font-weight: 500;
-  letter-spacing: -0.006em;
-  transition: transform 140ms var(--ease-out-soft),
-    background-color 160ms var(--ease-out-soft), color 160ms var(--ease-out-soft),
-    border-color 160ms var(--ease-out-soft), box-shadow 160ms var(--ease-out-soft),
-    opacity 160ms var(--ease-out-soft);
-  user-select: none;
-  white-space: nowrap;
-}
-.btn:active:not(:disabled) { transform: translateY(1px) scale(0.985); }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.7rem;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+    transition: transform 140ms var(--ease-out-soft),
+      background-color 160ms var(--ease-out-soft), color 160ms var(--ease-out-soft),
+      border-color 160ms var(--ease-out-soft), box-shadow 160ms var(--ease-out-soft),
+      opacity 160ms var(--ease-out-soft);
+    user-select: none;
+    white-space: nowrap;
+  }
+  .btn:active:not(:disabled) { transform: translateY(1px) scale(0.985); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.btn-primary {
-  background: linear-gradient(135deg, var(--color-iris-500), var(--color-iris-600));
-  color: white;
-  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.18) inset,
-    0 10px 30px -12px color-mix(in oklab, var(--color-iris-500) 90%, transparent);
-}
-.btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--color-iris-400), var(--color-iris-500));
-  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.22) inset,
-    0 14px 38px -12px color-mix(in oklab, var(--color-iris-500) 100%, transparent);
-}
+  .btn-primary {
+    background: linear-gradient(135deg, var(--color-iris-500), var(--color-iris-600));
+    color: white;
+    box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.18) inset,
+      0 10px 30px -12px color-mix(in oklab, var(--color-iris-500) 90%, transparent);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, var(--color-iris-400), var(--color-iris-500));
+    box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.22) inset,
+      0 14px 38px -12px color-mix(in oklab, var(--color-iris-500) 100%, transparent);
+  }
 
-.btn-ghost {
-  background: color-mix(in oklab, white 4%, transparent);
-  border: 1px solid var(--hairline);
-  color: var(--color-ink-200);
-}
-.btn-ghost:hover:not(:disabled) {
-  background: color-mix(in oklab, white 9%, transparent);
-  border-color: var(--hairline-strong);
-  color: var(--color-ink-100);
-}
-:root[data-theme="light"] .btn-ghost {
-  background: color-mix(in oklab, black 3%, transparent);
-}
-:root[data-theme="light"] .btn-ghost:hover:not(:disabled) {
-  background: color-mix(in oklab, black 6%, transparent);
-}
+  .btn-ghost {
+    background: color-mix(in oklab, white 4%, transparent);
+    border: 1px solid var(--hairline);
+    color: var(--color-ink-200);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: color-mix(in oklab, white 9%, transparent);
+    border-color: var(--hairline-strong);
+    color: var(--color-ink-100);
+  }
+  :root[data-theme="light"] .btn-ghost {
+    background: color-mix(in oklab, black 3%, transparent);
+  }
+  :root[data-theme="light"] .btn-ghost:hover:not(:disabled) {
+    background: color-mix(in oklab, black 6%, transparent);
+  }
 
-/* Range inputs, restyled per-engine. Worth the verbosity: the scrubber
-   is the control people touch most. */
-.range {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  background: transparent;
-  cursor: pointer;
-}
-.range::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 999px;
-  background: linear-gradient(
-    to right,
-    var(--color-iris-500) 0%,
-    var(--color-aqua-500) var(--fill, 0%),
-    color-mix(in oklab, white 12%, transparent) var(--fill, 0%)
-  );
-}
-.range::-moz-range-track {
-  height: 6px;
-  border-radius: 999px;
-  background: color-mix(in oklab, white 12%, transparent);
-}
-.range::-moz-range-progress {
-  height: 6px;
-  border-radius: 999px;
-  background: linear-gradient(to right, var(--color-iris-500), var(--color-aqua-500));
-}
-.range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 15px;
-  height: 15px;
-  margin-top: -4.5px;
-  border-radius: 50%;
-  background: white;
-  border: none;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 2px 10px -1px rgb(0 0 0 / 0.6);
-  transition: transform 140ms var(--ease-out-soft), box-shadow 140ms var(--ease-out-soft);
-}
-.range::-moz-range-thumb {
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: white;
-  border: none;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 2px 10px -1px rgb(0 0 0 / 0.6);
-}
-.range:hover::-webkit-slider-thumb { transform: scale(1.22); }
-.range:active::-webkit-slider-thumb {
-  transform: scale(1.32);
-  box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-iris-500) 26%, transparent);
+  /* Range inputs, restyled per-engine. Worth the verbosity: the scrubber
+     is the control people touch most. */
+  .range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    background: transparent;
+    cursor: pointer;
+  }
+  .range::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      var(--color-iris-500) 0%,
+      var(--color-aqua-500) var(--fill, 0%),
+      color-mix(in oklab, white 12%, transparent) var(--fill, 0%)
+    );
+  }
+  .range::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: color-mix(in oklab, white 12%, transparent);
+  }
+  .range::-moz-range-progress {
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(to right, var(--color-iris-500), var(--color-aqua-500));
+  }
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 15px;
+    height: 15px;
+    margin-top: -4.5px;
+    border-radius: 50%;
+    background: white;
+    border: none;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 2px 10px -1px rgb(0 0 0 / 0.6);
+    transition: transform 140ms var(--ease-out-soft), box-shadow 140ms var(--ease-out-soft);
+  }
+  .range::-moz-range-thumb {
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: white;
+    border: none;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 2px 10px -1px rgb(0 0 0 / 0.6);
+  }
+  .range:hover::-webkit-slider-thumb { transform: scale(1.22); }
+  .range:active::-webkit-slider-thumb {
+    transform: scale(1.32);
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-iris-500) 26%, transparent);
+  }
 }
 
 /* ── Scrollbars ───────────────────────────────────────────────── */
@@ -442,6 +473,12 @@ body {
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 .animate-fade { animation: fade-in 240ms var(--ease-out-soft) both; }
 
+@keyframes sheet-up {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: none; }
+}
+.animate-sheet { animation: sheet-up 300ms var(--ease-out-soft) both; }
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateX(16px) scale(0.97); }
   to { opacity: 1; transform: none; }
@@ -470,24 +507,26 @@ body {
 }
 .pulse-ring { animation: pulse-ring 2.1s var(--ease-out-soft) infinite; }
 
-/* Speaking indicator: five bars whose heights are driven by CSS alone.
-   A real analyser is pointless here — Web Speech exposes no signal — so
-   this is honest ornament, and it stops the moment playback stops. */
-.eq { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
-.eq span {
-  width: 2.5px;
-  border-radius: 999px;
-  background: currentColor;
-  height: 30%;
-  animation: eq-bounce 1.05s var(--ease-in-out-soft) infinite;
-}
-.eq span:nth-child(2) { animation-delay: 0.14s; }
-.eq span:nth-child(3) { animation-delay: 0.28s; }
-.eq span:nth-child(4) { animation-delay: 0.42s; }
-.eq span:nth-child(5) { animation-delay: 0.56s; }
-@keyframes eq-bounce {
-  0%, 100% { height: 26%; opacity: 0.55; }
-  50% { height: 100%; opacity: 1; }
+@layer components {
+  /* Speaking indicator: five bars whose heights are driven by CSS alone.
+     A real analyser is pointless here — Web Speech exposes no signal — so
+     this is honest ornament, and it stops the moment playback stops. */
+  .eq { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .eq span {
+    width: 2.5px;
+    border-radius: 999px;
+    background: currentColor;
+    height: 30%;
+    animation: eq-bounce 1.05s var(--ease-in-out-soft) infinite;
+  }
+  .eq span:nth-child(2) { animation-delay: 0.14s; }
+  .eq span:nth-child(3) { animation-delay: 0.28s; }
+  .eq span:nth-child(4) { animation-delay: 0.42s; }
+  .eq span:nth-child(5) { animation-delay: 0.56s; }
+  @keyframes eq-bounce {
+    0%, 100% { height: 26%; opacity: 0.55; }
+    50% { height: 100%; opacity: 1; }
+  }
 }
 
 .dropzone-hot {
@@ -515,3 +554,22 @@ body {
 }
 
 .tabular { font-variant-numeric: tabular-nums; }
+
+/* iOS home indicator / Android gesture bar. Without this the transport's
+   bottom row sits underneath it and the play button is half-swallowed. */
+.safe-bottom { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+
+/* Whole-window drop target. Shown only while a file is actually over the
+   window, so it never gets in the way of reading. */
+.drop-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklab, var(--color-ink-950) 72%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: none;
+}

@@ -2,94 +2,43 @@
 /* The empty state: drop target, paste panel, and a sample so the app can be
    evaluated in ten seconds without hunting for a PDF. */
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { ingestFile, ingestText, MAX_FILE_BYTES, formatBytes } from "@/lib/ingest";
-import { CHUNK_PRESETS } from "@/lib/text/chunk";
+import { useIngest } from "@/lib/use-ingest";
+import { ACCEPTED_FILE_TYPES, MAX_FILE_BYTES, formatBytes } from "@/lib/ingest";
 import { SAMPLE_TEXT } from "@/lib/sample";
 import { LinkImport } from "./LinkImport";
 import { Button, Progress } from "./ui/Primitives";
 import { Book, Bolt, Doc, Download, Play, Sparkle, Text, Upload, Waveform } from "./ui/Icons";
 
 export function Landing() {
-  const setDocument = useStore((s) => s.setDocument);
-  const setIngest = useStore((s) => s.setIngest);
-  const setIngestError = useStore((s) => s.setIngestError);
   const ingest = useStore((s) => s.ingest);
   const error = useStore((s) => s.ingestError);
-  const chunkPreset = useStore((s) => s.chunkPreset);
-  const toast = useStore((s) => s.toast);
+  const { openFile, openText, cancel } = useIngest();
 
   const [hot, setHot] = useState(false);
   const [linking, setLinking] = useState(false);
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const abort = useRef<AbortController | null>(null);
-
-  const handleFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const file = Array.from(files)[0];
-      if (!file) return;
-      const controller = new AbortController();
-      abort.current = controller;
-      setIngestError(null);
-      try {
-        const doc = await ingestFile(file, {
-          chunking: CHUNK_PRESETS[chunkPreset],
-          onProgress: setIngest,
-          signal: controller.signal,
-        });
-        setDocument(doc);
-        toast({
-          tone: "success",
-          title: "Ready to read",
-          body: `${doc.meta.words.toLocaleString()} words in ${doc.chunks.length.toLocaleString()} passages.`,
-        });
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          setIngest(null);
-          return;
-        }
-        setIngestError(err instanceof Error ? err.message : "Could not read that file.");
-      } finally {
-        abort.current = null;
-      }
-    },
-    [chunkPreset, setDocument, setIngest, setIngestError, toast],
-  );
-
-  const loadSample = () => {
-    const doc = ingestText(SAMPLE_TEXT, "The Lighthouse at Dunmore Head.md", {
-      chunking: CHUNK_PRESETS[chunkPreset],
-    });
-    setDocument(doc);
-  };
 
   const submitPaste = () => {
-    if (!pasted.trim()) return;
-    try {
-      const doc = ingestText(pasted, "Pasted text.txt", {
-        chunking: CHUNK_PRESETS[chunkPreset],
-      });
-      setDocument(doc);
+    if (openText(pasted, "Pasted text.txt")) {
       setPasting(false);
       setPasted("");
-    } catch (err) {
-      setIngestError(err instanceof Error ? err.message : "Could not read that text.");
     }
   };
 
   return (
     <div className="scroll-fine h-full overflow-y-auto">
-      <div className="mx-auto flex min-h-full max-w-4xl flex-col justify-center px-6 py-14">
+      <div className="mx-auto flex min-h-full max-w-4xl flex-col justify-center px-5 py-10 sm:px-6 sm:py-14">
         {/* Hero */}
         <div className="animate-rise text-center">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[var(--hairline)] bg-[color-mix(in_oklab,white_4%,transparent)] px-3.5 py-1.5 text-[11.5px] font-medium text-ink-300">
             <Sparkle width={13} height={13} className="text-iris-400" />
             PDF, EPUB, subtitles, YouTube - parsed entirely in your browser
           </div>
-          <h1 className="text-[clamp(2.4rem,6vw,3.9rem)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance">
+          <h1 className="text-[clamp(2.1rem,6vw,3.9rem)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance">
             <span className="grad-text">Give anything you read</span>
             <br />
             <span className="text-ink-100">a voice worth listening to.</span>
@@ -101,8 +50,26 @@ export function Landing() {
           </p>
         </div>
 
-        {/* Dropzone */}
+        {/* Dropzone. Clicking anywhere in it opens the picker — a big dashed
+            rectangle that says "drop a document here" reads as clickable, and
+            being wrong about that is a small, silent disappointment. */}
         <div
+          role="button"
+          tabIndex={ingest ? -1 : 0}
+          aria-label="Choose a document to read aloud"
+          onClick={(e) => {
+            if (ingest) return;
+            // Let the real controls inside handle their own clicks.
+            if ((e.target as HTMLElement).closest("button, a, textarea, input, label")) return;
+            inputRef.current?.click();
+          }}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              inputRef.current?.click();
+            }
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             setHot(true);
@@ -111,11 +78,11 @@ export function Landing() {
           onDrop={(e) => {
             e.preventDefault();
             setHot(false);
-            void handleFiles(e.dataTransfer.files);
+            void openFile(e.dataTransfer.files);
           }}
-          className={`animate-rise glass mt-10 rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-300 ${
+          className={`animate-rise glass ring-focus mt-10 rounded-2xl border-2 border-dashed p-6 text-center transition-all duration-300 sm:p-10 ${
             hot ? "dropzone-hot" : ""
-          }`}
+          } ${ingest ? "" : "cursor-pointer hover:border-[var(--hairline-strong)]"}`}
           style={{ animationDelay: "80ms" }}
         >
           {ingest ? (
@@ -129,8 +96,8 @@ export function Landing() {
                 <span className="tabular">{Math.round(ingest.ratio * 100)}%</span>
                 <span>-</span>
                 <button
-                  className="text-ink-300 underline underline-offset-2 hover:text-ink-100"
-                  onClick={() => abort.current?.abort()}
+                  className="ring-focus rounded text-ink-300 underline underline-offset-2 hover:text-ink-100"
+                  onClick={cancel}
                 >
                   Cancel
                 </button>
@@ -161,7 +128,11 @@ export function Landing() {
                   <Text width={16} height={16} />
                   Paste text
                 </Button>
-                <Button size="lg" onClick={loadSample}>
+                <Button
+                  size="lg"
+                  onClick={() => openText(SAMPLE_TEXT, "The Lighthouse at Dunmore Head.md")}
+                  title="A short story, already loaded - press play and hear what this sounds like"
+                >
                   <Book width={16} height={16} />
                   Try the sample
                 </Button>
@@ -169,10 +140,10 @@ export function Landing() {
               <input
                 ref={inputRef}
                 type="file"
-                accept=".pdf,.epub,.txt,.md,.markdown,.html,.htm,.xhtml,.vtt,.srt,.sbv,.ttml,.dfxp,application/pdf,application/epub+zip,text/plain,text/markdown,text/html,text/vtt"
+                accept={ACCEPTED_FILE_TYPES}
                 className="hidden"
                 onChange={(e) => {
-                  if (e.target.files?.length) void handleFiles(e.target.files);
+                  if (e.target.files?.length) void openFile(e.target.files);
                   e.target.value = "";
                 }}
               />
@@ -185,11 +156,16 @@ export function Landing() {
                 autoFocus
                 value={pasted}
                 onChange={(e) => setPasted(e.target.value)}
+                onKeyDown={(e) => {
+                  // Ctrl/Cmd+Enter submits, as it does in every other box on
+                  // the web that takes more than one line.
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitPaste();
+                }}
                 placeholder="Paste an article, a chapter, a transcript, anything. A copied YouTube transcript is recognised on sight."
                 rows={7}
                 className="ring-focus scroll-fine w-full resize-y rounded-xl border border-[var(--hairline)] bg-[var(--field)] p-3.5 font-serif text-[14px] leading-relaxed text-ink-100 placeholder:text-ink-500"
               />
-              <div className="mt-2.5 flex items-center justify-between">
+              <div className="mt-2.5 flex items-center justify-between gap-3">
                 <span className="tabular text-[12px] text-ink-400">
                   {pasted.length.toLocaleString()} characters
                 </span>
@@ -201,7 +177,10 @@ export function Landing() {
           )}
 
           {error && (
-            <div className="mt-5 rounded-xl border border-[color-mix(in_oklab,var(--color-rose-500)_38%,transparent)] bg-[color-mix(in_oklab,var(--color-rose-500)_9%,transparent)] px-4 py-3 text-left">
+            <div
+              role="alert"
+              className="mt-5 rounded-xl border border-[color-mix(in_oklab,var(--color-rose-500)_38%,transparent)] bg-[color-mix(in_oklab,var(--color-rose-500)_9%,transparent)] px-4 py-3 text-left"
+            >
               <p className="text-[13px] leading-relaxed text-rose-500">{error}</p>
             </div>
           )}
@@ -231,8 +210,10 @@ export function Landing() {
           />
         </div>
 
-        <p className="mt-8 text-center text-[11.5px] text-ink-500">
+        <p className="mt-8 text-center text-[11.5px] leading-relaxed text-ink-500">
           Nothing is uploaded. Parsing, highlighting and encoding all happen in this tab.
+          <br className="hidden sm:block" />
+          <span className="sm:ml-1">Free, no account, and it keeps your place in whatever you were reading.</span>
         </p>
       </div>
       <LinkImport open={linking} onClose={() => setLinking(false)} />

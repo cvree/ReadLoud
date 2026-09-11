@@ -51,10 +51,11 @@ export function VoiceStudio() {
       voices.map((v) => ({
         value: v.id,
         label: v.name,
-        hint: [v.lang, v.local === false ? "network" : v.local ? "on-device" : null]
-          .filter(Boolean)
-          .join(" - "),
-        badge: v.tag,
+        // The descriptor is a sentence ("American - warmest, best overall"),
+        // so it belongs on the hint line. Rendered as a badge it squeezed the
+        // voice's actual name down to nothing.
+        hint: v.tag ?? [v.lang, v.local === false ? "network" : "on-device"].join(" - "),
+        badge: v.local === false ? "network" : undefined,
       })),
     [voices],
   );

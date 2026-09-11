@@ -1,14 +1,19 @@
 "use client";
 /* ────────────────────────────────────────────────────────────────
-   App shell. Owns layout, the top bar, theme, and the panel state
-   that everything else reads from the store.
+   App shell. Owns layout, the top bar, theme, the panel state that
+   everything else reads from the store, and the two things that have
+   to be true everywhere rather than in one screen: you can drop a
+   file onto any part of the window, and every panel is reachable on
+   a phone.
    ──────────────────────────────────────────────────────────────── */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { useIngest } from "@/lib/use-ingest";
 import { resetSpeechQueue } from "@/lib/tts/webspeech";
 import { installDevtools } from "@/lib/devtools";
 import { formatClock } from "@/lib/audio/pipeline";
+import { ACCEPTED_FILE_TYPES } from "@/lib/ingest";
 import { Landing } from "./Landing";
 import { Reader } from "./Reader";
 import { Outline } from "./Outline";
@@ -17,10 +22,13 @@ import { Transport } from "./Transport";
 import { ExportDialog } from "./ExportDialog";
 import { HandoffBridge } from "./HandoffBridge";
 import { Toaster } from "./Toaster";
-import { Button } from "./ui/Primitives";
+import { Button, Dialog, Sheet } from "./ui/Primitives";
 import {
-  Book, Keyboard, List, Moon, Sliders, Sun, Trash, Waveform,
+  Book, Close, Keyboard, List, Moon, Sliders, Sun, Upload, Waveform,
 } from "./ui/Icons";
+
+/** Which panel the narrow-screen sheet is showing, if any. */
+type SheetName = "outline" | "voice" | null;
 
 export function Workspace() {
   const doc = useStore((s) => s.doc);
@@ -35,7 +43,12 @@ export function Workspace() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [sheet, setSheet] = useState<SheetName>(null);
   const [shortcuts, setShortcuts] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  const { openFile } = useIngest();
+  const fileInput = useRef<HTMLInputElement>(null);
 
   /* Discover which providers actually have keys, then load their voices. */
   useEffect(() => {
@@ -64,32 +77,119 @@ export function Workspace() {
     installDevtools(() => useStore.getState());
   }, []);
 
+  /* The inline script in `app/layout.tsx` has already applied the theme to
+     <html> before first paint. Read it back rather than deciding again, or
+     the two disagree for one frame. */
   useEffect(() => {
-    const stored = localStorage.getItem("readloud.theme");
-    const next = stored === "light" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.dataset.theme = next;
+    setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
   }, []);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark";
       document.documentElement.dataset.theme = next;
-      localStorage.setItem("readloud.theme", next);
+      try {
+        localStorage.setItem("readloud.theme", next);
+      } catch {
+        /* private browsing */
+      }
       return next;
     });
   }, []);
 
+  /* ── Panels ───────────────────────────────────────────────────
+     One control, two behaviours: on a wide screen it docks or undocks
+     the side pane, on a narrow one it raises the sheet. */
+  const showOutline = useCallback(() => {
+    if (window.matchMedia("(min-width: 1024px)").matches) setLeftOpen(true);
+    else setSheet("outline");
+  }, []);
+
+  const togglePanel = useCallback((which: "outline" | "voice") => {
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      if (which === "outline") setLeftOpen((v) => !v);
+      else setRightOpen((v) => !v);
+    } else {
+      setSheet((s) => (s === which ? null : which));
+    }
+  }, []);
+
+  /* ── Shell-level shortcuts ───────────────────────────────────── */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (target?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
       if (e.key === "?") setShortcuts((v) => !v);
-      if (e.key === "Escape") setShortcuts(false);
+      if (e.key === "Escape") {
+        setShortcuts(false);
+        setSheet(null);
+      }
+      // "/" is the search key everywhere else on the web; it should be here
+      // too, and it should raise the panel that holds the search box.
+      if (e.key === "/" && useStore.getState().doc) {
+        e.preventDefault();
+        showOutline();
+        setTimeout(() => window.dispatchEvent(new Event("readloud:focus-search")), 60);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [showOutline]);
+
+  /* ── Drop a file anywhere ─────────────────────────────────────
+     Dropping onto the window outside the landing zone used to make the
+     browser navigate away to the raw file, throwing away the session. */
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
+
+  useEffect(() => {
+    const carriesFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+    const onEnter = (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      dragDepth.current += 1;
+      setDropping(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault(); // without this the drop event never fires
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onLeave = () => {
+      // dragleave fires for every child element crossed, so count rather
+      // than clearing on the first one and flickering the whole way in.
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDropping(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      dragDepth.current = 0;
+      setDropping(false);
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer?.files.length) void openFile(e.dataTransfer.files);
+    };
+
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [openFile]);
+
+  const closeDocument = () => {
+    setConfirmClose(false);
+    setSheet(null);
+    reset();
+  };
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden">
@@ -97,8 +197,8 @@ export function Workspace() {
       <div className="grain" />
 
       {/* Top bar */}
-      <header className="glass relative z-30 flex h-14 shrink-0 items-center gap-3 rounded-b-2xl px-4">
-        <div className="flex items-center gap-2.5">
+      <header className="glass relative z-30 flex h-14 shrink-0 items-center gap-2 rounded-b-2xl px-3 sm:gap-3 sm:px-4">
+        <div className="flex shrink-0 items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-iris-500 to-aqua-500 shadow-md">
             <Waveform width={17} height={17} className="text-white" />
           </div>
@@ -111,7 +211,7 @@ export function Workspace() {
 
         {doc && (
           <>
-            <div className="mx-1 h-6 w-px bg-[var(--hairline)]" />
+            <div className="mx-1 hidden h-6 w-px bg-[var(--hairline)] md:block" />
             <div className="hidden min-w-0 flex-1 items-baseline gap-2.5 md:flex">
               <span className="truncate text-[13px] font-medium text-ink-200">
                 {doc.meta.title ?? doc.name}
@@ -123,28 +223,40 @@ export function Workspace() {
           </>
         )}
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
           {doc && (
             <>
               <Button
                 variant="bare"
                 size="icon"
-                onClick={() => setLeftOpen((v) => !v)}
-                title="Toggle outline"
-                className={`hidden lg:inline-flex ${leftOpen ? "text-ink-100" : ""}`}
+                onClick={() => togglePanel("outline")}
+                title="Contents and search (/)"
+                aria-label="Contents and search"
+                className={leftOpen ? "lg:text-ink-100" : ""}
               >
                 <List width={17} height={17} />
               </Button>
               <Button
                 variant="bare"
                 size="icon"
-                onClick={() => setRightOpen((v) => !v)}
-                title="Toggle voice studio"
-                className={`hidden lg:inline-flex ${rightOpen ? "text-ink-100" : ""}`}
+                onClick={() => togglePanel("voice")}
+                title="Voice and reading settings"
+                aria-label="Voice and reading settings"
+                className={rightOpen ? "lg:text-ink-100" : ""}
               >
                 <Sliders width={17} height={17} />
               </Button>
-              <div className="mx-1 hidden h-6 w-px bg-[var(--hairline)] lg:block" />
+              <div className="mx-1 hidden h-6 w-px bg-[var(--hairline)] sm:block" />
+              <Button
+                variant="bare"
+                size="icon"
+                onClick={() => fileInput.current?.click()}
+                title="Open another document"
+                aria-label="Open another document"
+                className="hidden sm:inline-flex"
+              >
+                <Upload width={17} height={17} />
+              </Button>
             </>
           )}
           <Button
@@ -152,22 +264,36 @@ export function Workspace() {
             size="icon"
             onClick={() => setShortcuts(true)}
             title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+            className="hidden sm:inline-flex"
           >
             <Keyboard width={17} height={17} />
           </Button>
-          <Button variant="bare" size="icon" onClick={toggleTheme} title="Toggle theme">
+          <Button
+            variant="bare"
+            size="icon"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to paper mode" : "Switch to dark mode"}
+            aria-label={theme === "dark" ? "Switch to paper mode" : "Switch to dark mode"}
+          >
             {theme === "dark" ? <Sun width={17} height={17} /> : <Moon width={17} height={17} />}
           </Button>
           {doc && (
-            <Button variant="bare" size="icon" onClick={reset} title="Close document">
-              <Trash width={17} height={17} />
+            <Button
+              variant="bare"
+              size="icon"
+              onClick={() => setConfirmClose(true)}
+              title="Close document"
+              aria-label="Close document"
+            >
+              <Close width={17} height={17} />
             </Button>
           )}
         </div>
       </header>
 
       {/* Body */}
-      <main className="relative z-10 flex min-h-0 flex-1 gap-3 p-3">
+      <main className="relative z-10 flex min-h-0 flex-1 gap-3 p-2 sm:p-3">
         {!doc ? (
           <div className="glass min-h-0 flex-1 overflow-hidden rounded-2xl">
             <Landing />
@@ -200,58 +326,116 @@ export function Workspace() {
       </main>
 
       {doc && (
-        <div className="relative z-20 px-3 pb-0">
+        <div className="safe-bottom relative z-20 px-2 sm:px-3">
           <Transport />
         </div>
       )}
 
+      {/* Narrow screens: the same two panels, as sheets. */}
+      <Sheet open={sheet === "outline"} onClose={() => setSheet(null)} title="Contents">
+        <Outline onNavigate={() => setSheet(null)} />
+      </Sheet>
+      <Sheet open={sheet === "voice"} onClose={() => setSheet(null)} title="Voice & reading">
+        <VoiceStudio />
+      </Sheet>
+
+      <input
+        ref={fileInput}
+        type="file"
+        accept={ACCEPTED_FILE_TYPES}
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files?.length) void openFile(e.target.files);
+          e.target.value = "";
+        }}
+      />
+
+      {dropping && (
+        <div className="drop-veil animate-fade">
+          <div className="glass-strong flex flex-col items-center gap-3 rounded-2xl px-10 py-8 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-iris-500 to-aqua-500 shadow-lg">
+              <Upload width={24} height={24} className="text-white" />
+            </div>
+            <p className="text-[16px] font-medium text-ink-100">Drop it anywhere</p>
+            <p className="max-w-xs text-[12.5px] leading-relaxed text-ink-400">
+              PDF, EPUB, Markdown, HTML, plain text or subtitles. It is parsed here in
+              this tab and never uploaded.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <Dialog
+        open={confirmClose}
+        onClose={() => setConfirmClose(false)}
+        title="Close this document?"
+        subtitle="Your place in it is remembered — open the same file again and it picks up where you stopped. The text itself was never stored anywhere, so you will need the file."
+        width={460}
+        footer={
+          <>
+            <Button onClick={() => setConfirmClose(false)}>Keep reading</Button>
+            <Button variant="primary" onClick={closeDocument}>
+              Close it
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13px] leading-relaxed text-ink-300">
+          Closing takes you back to the start screen, where you can drop in something
+          else. Nothing is deleted from your machine either way.
+        </p>
+      </Dialog>
+
       <ExportDialog />
       <HandoffBridge />
       <Toaster />
-      {shortcuts && <Shortcuts onClose={() => setShortcuts(false)} />}
+      <Shortcuts open={shortcuts} onClose={() => setShortcuts(false)} />
     </div>
   );
 }
 
+/* ── Shortcuts ──────────────────────────────────────────────── */
+
 const KEYS: Array<[string, string]> = [
   ["Space / K", "Play or pause"],
-  ["Left / Right", "Back or forward 15 seconds"],
-  ["Shift + Left / Right", "Previous or next passage"],
+  ["← / →", "Back or forward 15 seconds"],
+  ["Shift + ← / →", "Previous or next passage"],
   ["J / L", "Back or forward 30 seconds"],
-  ["Up / Down", "Volume"],
+  ["↑ / ↓", "Volume"],
   ["[ / ]", "Slower or faster"],
-  ["F", "Focus mode"],
+  ["F", "Focus mode — dim everything but the spoken passage"],
+  ["/", "Search the document"],
   ["Double-click a passage", "Start reading from there"],
+  ["Esc", "Close whatever is open"],
   ["?", "This panel"],
 ];
 
-function Shortcuts({ onClose }: { onClose: () => void }) {
+function Shortcuts({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
-      <div className="animate-fade absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={onClose} />
-      <div className="glass-strong animate-rise relative w-full max-w-md rounded-2xl p-6">
-        <div className="mb-4 flex items-center gap-2.5">
-          <Keyboard width={18} height={18} className="text-iris-400" />
-          <h2 className="text-[16px] font-semibold text-ink-100">Keyboard</h2>
-        </div>
-        <dl className="space-y-0.5">
-          {KEYS.map(([key, action]) => (
-            <div
-              key={key}
-              className="flex items-center justify-between gap-4 rounded-lg px-2 py-2 transition-colors hover:bg-[color-mix(in_oklab,white_5%,transparent)]"
-            >
-              <dt className="text-[12.5px] text-ink-300">{action}</dt>
-              <dd className="shrink-0 rounded-md border border-[var(--hairline)] bg-[var(--field)] px-2 py-1 font-mono text-[11px] text-ink-200">
-                {key}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <p className="mt-4 flex items-center gap-1.5 text-[11.5px] text-ink-500">
-          <Book width={12} height={12} />
-          Shortcuts are ignored while a text field has focus.
-        </p>
-      </div>
-    </div>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Keyboard"
+      subtitle="Everything here also has a button — these are for when your hands are already on the keys."
+      width={480}
+    >
+      <dl className="space-y-0.5">
+        {KEYS.map(([key, action]) => (
+          <div
+            key={key}
+            className="flex items-center justify-between gap-4 rounded-lg px-2 py-2 transition-colors hover:bg-[color-mix(in_oklab,white_5%,transparent)]"
+          >
+            <dt className="text-[12.5px] text-ink-300">{action}</dt>
+            <dd className="shrink-0 rounded-md border border-[var(--hairline)] bg-[var(--field)] px-2 py-1 font-mono text-[11px] text-ink-200">
+              {key}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-4 flex items-center gap-1.5 text-[11.5px] text-ink-500">
+        <Book width={12} height={12} />
+        Shortcuts are ignored while a text field has focus.
+      </p>
+    </Dialog>
   );
 }

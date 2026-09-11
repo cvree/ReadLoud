@@ -13,10 +13,19 @@ const TONE = {
 export function Toaster() {
   const toasts = useStore((s) => s.toasts);
   const dismiss = useStore((s) => s.dismissToast);
+  // Bottom-right is exactly where the transport's own controls live once a
+  // document is open, and a toast landing on the play button is worse than no
+  // toast at all. Sit above the bar, and clear of the phone's home indicator.
+  const hasTransport = useStore((s) => s.doc !== null);
 
   return (
     <div
-      className="pointer-events-none fixed right-4 bottom-4 z-[200] flex w-[min(23rem,calc(100vw-2rem))] flex-col gap-2"
+      className="pointer-events-none fixed right-3 z-[200] flex w-[min(23rem,calc(100vw-1.5rem))] flex-col gap-2 sm:right-4"
+      style={{
+        bottom: hasTransport
+          ? "calc(9rem + env(safe-area-inset-bottom))"
+          : "calc(1rem + env(safe-area-inset-bottom))",
+      }}
       role="status"
       aria-live="polite"
     >
@@ -34,6 +43,17 @@ export function Toaster() {
               <div className="text-[13px] font-medium text-ink-100">{t.title}</div>
               {t.body && (
                 <div className="mt-0.5 text-[12px] leading-snug text-ink-400">{t.body}</div>
+              )}
+              {t.action && (
+                <button
+                  onClick={() => {
+                    t.action?.run();
+                    dismiss(t.id);
+                  }}
+                  className="ring-focus mt-1.5 rounded-md text-[12px] font-medium text-iris-400 underline underline-offset-2 transition-colors hover:text-iris-500"
+                >
+                  {t.action.label}
+                </button>
               )}
             </div>
             <button

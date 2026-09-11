@@ -1,0 +1,75 @@
+# Builds ReadLoud as a static site and publishes it to GitHub Pages.
+#
+# There is nothing to configure and no secret to add: the app has no server,
+# no database and no API keys. `configure-pages` turns Pages on the first
+# time this runs, and reports the subdirectory the site will be served from
+# (/<repo>/) — which the build needs, because a project page is not served
+# from the root.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      # So a working branch can be seen live before it is merged.
+      - "claude/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one halfway: a cancelled deploy can
+# leave the live site on a half-uploaded artifact.
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall copies the pdf.js worker and the onnxruntime WASM
+      # binaries into public/, so they ship from our own origin.
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Build static export
+        run: npm run build:static
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+
+      # Without this, Pages runs the output through Jekyll, which drops every
+      # path beginning with an underscore — which is all of Next's assets.
+      - name: Disable Jekyll
+        run: touch out/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

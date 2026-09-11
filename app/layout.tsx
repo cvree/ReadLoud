@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { BASE_PATH } from "@/lib/base-path";
 import "./globals.css";
 
 const DESCRIPTION =
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
   title: "ReadLoud - Read anything aloud",
   description: DESCRIPTION,
   applicationName: "ReadLoud",
+  manifest: `${BASE_PATH}/manifest.webmanifest`,
   keywords: [
     "text to speech",
     "PDF reader",
@@ -28,15 +30,46 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#05060a",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#05060a" },
+    { media: "(prefers-color-scheme: light)", color: "#f6f5f2" },
+  ],
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
+  // Phones report a viewport that excludes the address bar and then change
+  // their mind while you scroll. `viewport-fit` plus `100dvh` is what keeps
+  // the transport bar on screen instead of underneath the browser chrome.
+  viewportFit: "cover",
 };
+
+/**
+ * Theme before first paint.
+ *
+ * The theme lives in localStorage, which React cannot read during
+ * prerender — so without this the first frame is always dark and anyone
+ * who chose paper mode gets a black flash on every single load. Runs
+ * synchronously in <head>, before the body exists.
+ */
+const THEME_BOOTSTRAP = `
+try {
+  var stored = localStorage.getItem("readloud.theme");
+  var theme = stored === "light" || stored === "dark"
+    ? stored
+    : (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  document.documentElement.dataset.theme = theme;
+} catch (e) {}
+`.trim();
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+        {/* Restores cross-origin isolation on hosts that cannot send headers.
+            A no-op where the headers are already there. See the file itself. */}
+        <script src={`${BASE_PATH}/coi-serviceworker.js`} defer />
+      </head>
       <body>{children}</body>
     </html>
   );

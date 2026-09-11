@@ -31,6 +31,8 @@ export interface Toast {
   tone: "info" | "success" | "warn" | "error";
   title: string;
   body?: string;
+  /** Optional one-click undo / follow-up, rendered as a link in the toast. */
+  action?: { label: string; run: () => void };
 }
 
 interface State {
@@ -87,6 +89,56 @@ interface State {
 }
 
 const PREFS_KEY = "readloud.prefs.v1";
+const PLACES_KEY = "readloud.places.v1";
+
+/* ── Keeping your place ──────────────────────────────────────────
+   Nobody finishes a nine-hundred-page book in one sitting, and until
+   now closing the tab meant starting it again from page one. The
+   document itself is never stored — it never leaves the machine and
+   it can be gigabytes — only which passage you had reached, keyed by
+   something stable about the file.
+   ──────────────────────────────────────────────────────────────── */
+
+/** Stable across re-opens of the same file; different for a different file. */
+function placeKey(doc: Document): string {
+  return `${doc.name}|${doc.bytes}|${doc.meta.characters}`;
+}
+
+type Places = Record<string, { chunkIndex: number; at: number }>;
+
+function readPlaces(): Places {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(PLACES_KEY) ?? "{}") as Places;
+  } catch {
+    return {};
+  }
+}
+
+function rememberPlace(doc: Document | null, chunkIndex: number) {
+  if (!doc || typeof window === "undefined") return;
+  try {
+    const places = readPlaces();
+    places[placeKey(doc)] = { chunkIndex, at: Date.now() };
+    // Bounded: the twenty most recent documents. Without a cap this grows
+    // forever and eventually trips the localStorage quota, which would take
+    // the *preferences* down with it.
+    const trimmed = Object.entries(places)
+      .sort((a, b) => b[1].at - a[1].at)
+      .slice(0, 20);
+    localStorage.setItem(PLACES_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+  } catch {
+    /* private browsing / quota */
+  }
+}
+
+function recallPlace(doc: Document): number {
+  const entry = readPlaces()[placeKey(doc)];
+  if (!entry) return 0;
+  // A position past the end means the document was re-chunked at a different
+  // preset since. Better to start over than to land somewhere arbitrary.
+  return entry.chunkIndex > 0 && entry.chunkIndex < doc.chunks.length ? entry.chunkIndex : 0;
+}
 
 interface Prefs {
   providerId: ProviderId;
@@ -155,7 +207,16 @@ export const useStore = create<State>((set, get) => {
   const narrator = new Narrator();
   const prefs = loadPrefs();
 
-  narrator.onUpdate = (player) => set({ player });
+  // Word-rate updates, so this must stay cheap: the only extra work is a
+  // comparison, and the write to localStorage happens once per passage.
+  let lastSavedChunk = -1;
+  narrator.onUpdate = (player) => {
+    set({ player });
+    if (player.chunkIndex !== lastSavedChunk) {
+      lastSavedChunk = player.chunkIndex;
+      rememberPlace(get().doc, player.chunkIndex);
+    }
+  };
   narrator.settings.rate = prefs.rate ?? 1;
   narrator.settings.pitch = prefs.pitch ?? 1;
   narrator.settings.volume = prefs.volume ?? 1;
@@ -193,8 +254,26 @@ export const useStore = create<State>((set, get) => {
     setDocument(doc) {
       set({ doc, ingest: null, ingestError: null });
       if (doc) {
+        // Read the remembered place *before* loading: `load()` resets the
+        // narrator to passage 0, which goes straight back out through
+        // `onUpdate` and would overwrite the very position being read.
+        const place = recallPlace(doc);
+
         narrator.load(doc.chunks);
         set({ view: "reader" });
+
+        // Pick up where this document was left off, and say so — silently
+        // landing someone in chapter nine reads as a bug, not a feature.
+        if (place > 0) {
+          narrator.jump(place);
+          get().toast({
+            tone: "info",
+            title: "Picked up where you left off",
+            body: `Passage ${(place + 1).toLocaleString()} of ${doc.chunks.length.toLocaleString()}.`,
+            action: { label: "Start from the beginning", run: () => narrator.jump(0) },
+          });
+        }
+
         // Somebody who has just opened a book is going to press play. Start
         // fetching the model now so the wait overlaps with them finding their
         // place, rather than landing between the press and the first word.
@@ -335,7 +414,8 @@ export const useStore = create<State>((set, get) => {
     toast(t) {
       const id = Math.random().toString(36).slice(2);
       set({ toasts: [...get().toasts, { ...t, id }] });
-      const ttl = t.tone === "error" ? 9000 : 4500;
+      // Long enough to read; longer again when there is something to click.
+      const ttl = t.tone === "error" ? 9000 : t.action ? 11000 : 4500;
       setTimeout(() => get().dismissToast(id), ttl);
     },
 
@@ -345,8 +425,11 @@ export const useStore = create<State>((set, get) => {
 
     reset() {
       narrator.stop();
-      narrator.load([]);
+      // Clear the document first, for the same reason: unloading the narrator
+      // reports passage 0, and that must not be written down as "where you
+      // had got to" in the book being closed.
       set({ doc: null, ingest: null, ingestError: null, view: "reader", exportProgress: null });
+      narrator.load([]);
     },
   };
 });

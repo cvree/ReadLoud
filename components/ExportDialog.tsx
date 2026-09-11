@@ -278,7 +278,7 @@ export function ExportDialog() {
         <>
           {!canRender && <CaptureNotice supported={isTabCaptureSupported()} />}
 
-          <div className="grid grid-cols-2 gap-x-5">
+          <div className="grid grid-cols-1 gap-x-5 sm:grid-cols-2">
             <Field label="Bitrate" value={`${kbps} kbps`}>
               <Select<string>
                 value={String(kbps)}

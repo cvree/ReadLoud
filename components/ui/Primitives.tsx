@@ -165,7 +165,7 @@ export function Segmented<T extends string>({
             aria-selected={active}
             title={opt.title}
             onClick={() => onChange(opt.value)}
-            className={`ring-focus flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-medium transition-all duration-200 ${
+            className={`ring-focus flex h-8 items-center justify-center gap-1.5 truncate rounded-lg px-2.5 text-[12.5px] font-medium transition-all duration-200 sm:px-3 sm:text-[13px] ${
               stretch ? "min-w-0 flex-1" : ""
             } ${
               active
@@ -269,7 +269,7 @@ export function Select<T extends string>({
           )}
         </span>
         {selected?.badge && (
-          <span className="shrink-0 rounded-md bg-[color-mix(in_oklab,var(--color-iris-500)_22%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-iris-400 uppercase">
+          <span className="max-w-[38%] shrink-0 truncate rounded-md bg-[color-mix(in_oklab,var(--color-iris-500)_22%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-iris-400 uppercase">
             {selected.badge}
           </span>
         )}
@@ -378,10 +378,10 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="glass-strong animate-rise relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl"
+        className="glass-strong animate-rise relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-2xl"
         style={{ maxWidth: width }}
       >
-        <header className="hairline-b flex items-start gap-4 px-6 py-5">
+        <header className="hairline-b flex items-start gap-4 px-4 py-4 sm:px-6 sm:py-5">
           <div className="min-w-0 flex-1">
             <h2 className="text-[17px] font-semibold tracking-tight text-ink-100">{title}</h2>
             {subtitle && <p className="mt-1 text-[13px] leading-relaxed text-ink-400">{subtitle}</p>}
@@ -390,8 +390,70 @@ export function Dialog({
             <Close width={18} height={18} />
           </Button>
         </header>
-        <div className="scroll-fine min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <footer className="hairline-t flex items-center justify-end gap-3 px-6 py-4">{footer}</footer>}
+        <div className="scroll-fine min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">{children}</div>
+        {footer && (
+          <footer className="hairline-t flex flex-wrap items-center justify-end gap-2 px-4 py-4 sm:gap-3 sm:px-6">
+            {footer}
+          </footer>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Sheet ──────────────────────────────────────────────────── */
+
+/**
+ * The narrow-screen home for the panels that are docked either side on a
+ * desktop. Without it the outline, the search and every voice control were
+ * simply unreachable below 1024px — the app on a phone was a play button and
+ * a wall of text, which is not the same app.
+ *
+ * Slides up from the bottom because that is where the thumb is.
+ */
+export function Sheet({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[120] flex flex-col justify-end lg:hidden">
+      <div className="animate-fade absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="glass-strong animate-sheet relative flex max-h-[82dvh] min-h-0 flex-col rounded-t-2xl"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <header className="hairline-b flex shrink-0 items-center gap-3 px-4 py-3">
+          <span
+            aria-hidden
+            className="absolute -top-2.5 left-1/2 h-1 w-10 -translate-x-1/2 rounded-full bg-[var(--hairline-strong)]"
+          />
+          <h2 className="text-[14px] font-semibold text-ink-100">{title}</h2>
+          <Button variant="bare" size="icon" onClick={onClose} aria-label="Close" className="ml-auto">
+            <Close width={18} height={18} />
+          </Button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </div>
     </div>
   );

@@ -95,10 +95,11 @@ function parseStartTime(t: string): number | undefined {
   return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
 }
 
-export function watchUrl(videoId: string, returnOrigin: string): string {
+export function watchUrl(videoId: string, returnBaseUrl: string): string {
   // The helper reads its instructions out of the fragment, which never leaves
-  // the browser. `readloud` names the origin to hand the transcript back to.
-  return `https://www.youtube.com/watch?v=${videoId}#readloud=${encodeURIComponent(returnOrigin)}`;
+  // the browser. `readloud` names the URL to hand the transcript back to —
+  // origin and path prefix both, since ReadLoud may live in a subdirectory.
+  return `https://www.youtube.com/watch?v=${videoId}#readloud=${encodeURIComponent(returnBaseUrl)}`;
 }
 
 /* ── Payload codec ───────────────────────────────────────────── */

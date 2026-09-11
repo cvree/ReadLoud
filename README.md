@@ -12,11 +12,17 @@ Everything — parsing, **the neural voice itself**, highlighting, MP3 encoding 
 runs in the browser. No account, no API key, no server, no bill. Nothing you
 open ever leaves your machine.
 
+### [→ Open ReadLoud](https://cvree.github.io/ReadLoud/)
+
 </div>
 
 ---
 
 ## Quick start
+
+It is live at **<https://cvree.github.io/ReadLoud/>** — nothing to install.
+
+To run it yourself:
 
 ```bash
 npm install          # also copies the pdf.js and onnxruntime workers into public/
@@ -43,6 +49,8 @@ afterwards. If you would rather not spend the download, switch the engine to
 | **Follows along** | Word-level highlighting, sentence bedding, focus mode, auto-scroll |
 | **Exports audio** | Real MP3 via LAME in a worker, streaming, faster than realtime |
 | **Exports text** | Markdown, plain text, SRT, WebVTT, JSON — with measured timings |
+| **Keeps your place** | Reopen the same file and it resumes at the passage you stopped on |
+| **Works on a phone** | Every panel is reachable, and it installs as an app |
 
 Measured on a synthetic 2,400-page PDF (376,805 words, 38.3 hours of audio),
 in Chromium:
@@ -61,7 +69,7 @@ in Chromium:
 ```
 app/
   globals.css             Design system: tokens, glass, aurora, highlight states
-  icon.svg  layout.tsx  page.tsx
+  icon.svg  layout.tsx  manifest.ts  page.tsx
 
 lib/
   types.ts                Core domain model — everything flows through these
@@ -104,6 +112,8 @@ lib/
     download.ts
 
   store.ts                Zustand store binding it all together
+  use-ingest.ts           Opening a document, from wherever it was dropped
+  base-path.ts            Where this copy is served from (root, or /ReadLoud/)
   devtools.ts             `window.__readloud` in development
 
 components/
@@ -116,7 +126,14 @@ components/
   VoiceStudio.tsx         Engine, voice, pacing, reading preferences
   Transport.tsx           Play/pause/scrub/speed/volume
   ExportDialog.tsx        Audio + transcript export
-  ui/                     Button, Slider, Switch, Segmented, Select, Dialog…
+  ui/                     Button, Slider, Switch, Segmented, Select, Dialog, Sheet…
+
+public/
+  coi-serviceworker.js    Cross-origin isolation on a host that cannot send headers
+  readloud-helper.user.js The YouTube helper
+
+.github/workflows/
+  deploy.yml              Static export → GitHub Pages, on every push to main
 ```
 
 ---
@@ -359,9 +376,12 @@ pretending the limitation does not exist.
 
 ## Design notes
 
-Dark by default; a light "paper" mode for daytime reading. Both come from one
-set of CSS custom properties — there are no per-theme component styles
-anywhere. Three ideas hold it together:
+Dark by default, unless your system asks for light — a first visit follows
+`prefers-color-scheme`, and after that it follows whatever you last chose. An
+inline script in `app/layout.tsx` applies it before first paint, so the paper
+theme never opens with a black flash. Both themes come from one set of CSS
+custom properties; there are no per-theme component styles anywhere. Three
+ideas hold it together:
 
 - **Depth through translucency, not borders.** Glass panes over a slow aurora,
   so the app reads as one continuous space instead of a grid of boxes.
@@ -404,6 +424,8 @@ re-renders one paragraph, measured at 0.57 ms on a 2,743-passage document.
 | `↑` / `↓` | Volume |
 | `[` / `]` | Slower / faster |
 | `F` | Focus mode |
+| `/` | Search the document |
+| `Esc` | Close whatever is open |
 | `?` | Shortcuts |
 | Double-click a passage | Start reading there |
 
@@ -412,10 +434,11 @@ re-renders one paragraph, measured at 0.57 ms on a 2,743-passage document.
 ## Development
 
 ```bash
-npm run dev        # dev server
-npm run build      # production build
-npm run typecheck  # tsc --noEmit
-npm test           # caption ingestion tests - no framework, no dependency
+npm run dev          # dev server
+npm run build        # production build (Node host)
+npm run build:static # static export → out/ (GitHub Pages and friends)
+npm run typecheck    # tsc --noEmit
+npm test             # caption ingestion tests - no framework, no dependency
 ```
 
 In development, `window.__readloud` is available in the console:
@@ -450,34 +473,62 @@ confirming that bytes came out.
 
 ## Deploy
 
-The app is a standard Next.js build with no server-side secrets, no database
-and no API routes — every deployment target below is free.
+The app has no server, no database, no API routes and no secrets, so every
+target below is free and none of them need configuring.
 
-**Vercel** (zero config):
+### GitHub Pages (what this repo does)
 
-1. Push the repo to GitHub.
-2. At [vercel.com](https://vercel.com), *Add New → Project*, import the repo.
-3. Deploy. Nothing to configure — there are no environment variables.
+`.github/workflows/deploy.yml` builds a static export and publishes it on every
+push to `main`. There is nothing to set up — the workflow turns Pages on the
+first time it runs — and nothing to add afterwards.
 
-**Cloudflare Pages / Netlify:** build `npm run build`, and use the platform's
-Next.js adapter. Both serve the `_headers` semantics described below.
+Two details it takes care of, both of which would otherwise break the site:
 
-**Any Node host** (Railway, Render, Fly.io, a VPS): `npm ci && npm run build &&
-npm start`.
+**The subdirectory.** A project page is served from `/<repo>/`, not the root,
+so `assetPrefix` alone is not enough: the pdf.js worker, the onnxruntime WASM
+binaries and the YouTube hand-off URL are all handed to things the bundler
+never sees. `lib/base-path.ts` is where that prefix lives, fed by
+`NEXT_PUBLIC_BASE_PATH`, which the workflow fills in from the Pages API.
 
-### One thing worth getting right: cross-origin isolation
+**The headers.** `output: "export"` cannot emit headers at all, and a static
+host would not send them anyway — so a static deployment loses the
+cross-origin isolation that lets onnxruntime run WASM inference
+multi-threaded. `public/coi-serviceworker.js` puts it back: a service worker
+re-serves same-origin responses with `Cross-Origin-Opener-Policy: same-origin`
+and `Cross-Origin-Embedder-Policy: credentialless`, the same pair
+`next.config.ts` sends on a Node host. It reloads the page at most once per
+tab, ever, and where it cannot run at all the app is simply single-threaded.
+Load any page with `?coi=off` to unregister it.
 
-`next.config.ts` sets `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: credentialless`. Together these make the page
-*cross-origin isolated*, which is what lets `onnxruntime-web` use
-`SharedArrayBuffer` and run WASM inference multi-threaded. Drop them and
-synthesis still works — single-threaded, and noticeably slower.
+To build the same thing locally:
 
-This is the one reason to prefer a host that runs `next start` (or honors a
-`_headers` file) over a plain static file host. A static export via
-`output: "export"` would otherwise work fine — there is nothing dynamic left in
-the app — but Next.js cannot emit headers in that mode, so you would be
-serving the slow path.
+```bash
+NEXT_PUBLIC_BASE_PATH=/ReadLoud npm run build:static   # → out/
+```
+
+### Vercel (zero config)
+
+*Add New → Project*, import the repo, deploy. No environment variables. This
+path runs `next start`, so the isolation headers come from `next.config.ts`
+and the service worker stands down on its own.
+
+### Cloudflare Pages / Netlify
+
+Build `npm run build`, and use the platform's Next.js adapter.
+
+### Any Node host
+
+Railway, Render, Fly.io, a VPS: `npm ci && npm run build && npm start`.
+
+### Why cross-origin isolation is worth this much trouble
+
+`Cross-Origin-Opener-Policy: same-origin` plus
+`Cross-Origin-Embedder-Policy: credentialless` make the page *cross-origin
+isolated*, which is what lets `onnxruntime-web` use `SharedArrayBuffer` and
+run WASM inference on several threads. Without it synthesis still works —
+WebGPU does not need it at all — but the WASM fallback path is noticeably
+slower, which on a long book is the difference between the narrator keeping up
+and the narrator stopping to think.
 
 ## License
 

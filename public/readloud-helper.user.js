@@ -42,7 +42,9 @@
     if (target.protocol !== "https:" && target.hostname !== "localhost") return;
 
     history.replaceState(null, "", location.pathname + location.search);
-    grab(target.origin);
+    // Origin *and* path: ReadLoud may be deployed in a subdirectory, and
+    // dropping the prefix would hand the transcript to a 404.
+    grab(target.origin + target.pathname.replace(/\/+$/, ""));
   }
 
   /* ── UI ───────────────────────────────────────────────────── */
@@ -189,7 +191,7 @@
     return toBase64Url(new Uint8Array(await new Response(stream).arrayBuffer()));
   }
 
-  async function grab(origin) {
+  async function grab(base) {
     try {
       banner("ReadLoud: reading the transcript…");
 
@@ -258,7 +260,7 @@
       }
 
       banner("ReadLoud: got " + cues.length.toLocaleString() + " lines. Handing over…");
-      location.replace(origin + "/#yt=" + encoded);
+      location.replace(base + "/#yt=" + encoded);
     } catch (err) {
       banner("ReadLoud: " + (err && err.message ? err.message : "could not read the transcript."), "error");
     }

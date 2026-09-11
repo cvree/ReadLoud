@@ -2,17 +2,36 @@
 /* Document outline: sections with progress, plus a passage jump list for
    the current section. Doubles as the search surface. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { formatClock } from "@/lib/audio/pipeline";
 import { Book, Doc } from "./ui/Icons";
 
-export function Outline() {
+export function Outline({ onNavigate }: { onNavigate?: () => void } = {}) {
   const doc = useStore((s) => s.doc);
   const chunkIndex = useStore((s) => s.player.chunkIndex);
   const narrator = useStore((s) => s.narrator);
   const rate = useStore((s) => s.rate);
   const [query, setQuery] = useState("");
+  const search = useRef<HTMLInputElement>(null);
+
+  /* "/" anywhere in the app puts the caret here. The shell raises this panel
+     first (or the sheet, on a phone) and then fires the event. */
+  useEffect(() => {
+    const focus = () => {
+      search.current?.focus();
+      search.current?.select();
+    };
+    window.addEventListener("readloud:focus-search", focus);
+    return () => window.removeEventListener("readloud:focus-search", focus);
+  }, []);
+
+  /* Jumping is a navigation: on a phone the panel it was triggered from is
+     covering the words you just asked to hear. */
+  const goTo = (index: number) => {
+    narrator.jump(index);
+    onNavigate?.();
+  };
 
   /* Aggregate chunks per section once; a 900-page PDF has ~900 sections
      and we do not want to re-scan 8,000 chunks on every render. */
@@ -71,9 +90,24 @@ export function Outline() {
     <div className="flex h-full flex-col">
       <div className="hairline-b shrink-0 p-3">
         <input
+          ref={search}
+          type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search the document"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              // Clear first, dismiss second: Escape on a full box almost
+              // always means "undo what I typed".
+              if (query) {
+                e.stopPropagation();
+                setQuery("");
+              } else {
+                search.current?.blur();
+              }
+            }
+          }}
+          aria-label="Search the document"
+          placeholder="Search the document  ( / )"
           className="ring-focus w-full rounded-xl border border-[var(--hairline)] bg-[var(--field)] px-3 py-2 text-[13px] text-ink-100 placeholder:text-ink-500"
         />
       </div>
@@ -87,7 +121,7 @@ export function Outline() {
             {matches.map((m) => (
               <button
                 key={m.index}
-                onClick={() => narrator.jump(m.index)}
+                onClick={() => goTo(m.index)}
                 className="mb-1 block w-full rounded-lg px-2.5 py-2 text-left transition-colors duration-[140ms] hover:bg-[color-mix(in_oklab,white_7%,transparent)]"
               >
                 <div className="text-[10px] font-semibold tracking-wide text-iris-400 uppercase">
@@ -121,7 +155,7 @@ export function Outline() {
           return (
             <button
               key={s.id}
-              onClick={() => narrator.jump(s.first)}
+              onClick={() => goTo(s.first)}
               className={`group relative mb-0.5 block w-full overflow-hidden rounded-lg px-2.5 py-2 text-left transition-colors duration-[140ms] ${
                 active
                   ? "bg-[color-mix(in_oklab,var(--color-iris-500)_16%,transparent)]"

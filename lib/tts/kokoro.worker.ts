@@ -26,6 +26,7 @@
 /// <reference lib="webworker" />
 
 import { KokoroTTS, env } from "kokoro-js";
+import { asset } from "@/lib/base-path";
 
 /** Apache-2.0 weights, ONNX-converted, hosted on the Hugging Face CDN. */
 const MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
@@ -73,7 +74,7 @@ function post(msg: Outbound, transfer?: Transferable[]) {
  * override would turn a working CDN default into a 404 and a dead play button.
  */
 async function useLocalRuntime(): Promise<void> {
-  const base = `${self.location.origin}/ort/`;
+  const base = `${self.location.origin}${asset("/ort/")}`;
   try {
     // The 44 KB loader rather than the 21 MB binary beside it: onnxruntime
     // fetches this file anyway, so a hit here costs nothing and a miss is

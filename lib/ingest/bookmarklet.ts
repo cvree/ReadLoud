@@ -12,10 +12,10 @@
    the player response is fresh and the failure modes are visible.
    ──────────────────────────────────────────────────────────────── */
 
-/** Source of the bookmarklet, with `__ORIGIN__` standing in for this app. */
+/** Source of the bookmarklet, with `__BASE__` standing in for this app. */
 const SOURCE = `
 (async function(){
-  var O="__ORIGIN__";
+  var O="__BASE__";
   function fail(m){alert("ReadLoud: "+m);}
   try{
     var pr=window.ytInitialPlayerResponse;
@@ -54,12 +54,15 @@ const SOURCE = `
 /**
  * Build the `javascript:` URL for a given deployment.
  *
+ * `baseUrl` is origin *and* path prefix ("https://user.github.io/ReadLoud"),
+ * because a subdirectory deployment has to be handed back the subdirectory.
+ *
  * Whitespace is collapsed because a bookmarklet is one line by definition,
  * and the whole thing is percent-encoded: the payload arithmetic below is
  * full of characters (`#`, `%`, `+`) that a bare href would eat.
  */
-export function buildBookmarklet(origin: string): string {
-  const code = SOURCE.replace(/__ORIGIN__/g, origin)
+export function buildBookmarklet(baseUrl: string): string {
+  const code = SOURCE.replace(/__BASE__/g, baseUrl)
     .split("\n")
     .map((l) => l.trim())
     .join("");

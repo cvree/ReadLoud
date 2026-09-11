@@ -27,6 +27,7 @@ import { buildBookmarklet } from "@/lib/ingest/bookmarklet";
 import { parseYouTubeUrl, watchUrl } from "@/lib/ingest/youtube";
 import { Button, Dialog } from "./ui/Primitives";
 import { Check, Doc, Info, Sparkle, Text } from "./ui/Icons";
+import { appBaseUrl, asset } from "@/lib/base-path";
 
 export const HELPER_INSTALLED_KEY = "readloud.helper.v1";
 
@@ -72,7 +73,7 @@ export function LinkImport({ open, onClose }: { open: boolean; onClose: () => vo
   useEffect(() => {
     if (!open) return;
     const el = bookmarkRef.current;
-    if (el) el.setAttribute("href", buildBookmarklet(window.location.origin));
+    if (el) el.setAttribute("href", buildBookmarklet(appBaseUrl()));
   }, [open]);
 
   useEffect(() => () => {
@@ -82,7 +83,7 @@ export function LinkImport({ open, onClose }: { open: boolean; onClose: () => vo
   const fetchIt = useCallback(() => {
     if (!video) return;
     // Must be inside the click handler or the popup blocker eats it.
-    window.open(watchUrl(video.videoId, window.location.origin), "_blank", "noopener");
+    window.open(watchUrl(video.videoId, appBaseUrl()), "_blank", "noopener");
     setPhase("waiting");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setPhase("timedout"), WAIT_MS);
@@ -200,7 +201,7 @@ export function LinkImport({ open, onClose }: { open: boolean; onClose: () => vo
             body="Needs Tampermonkey or Violentmonkey. After this, the button above does the whole job on its own."
           >
             <a
-              href="/readloud-helper.user.js"
+              href={asset("/readloud-helper.user.js")}
               target="_blank"
               rel="noreferrer"
               className="btn btn-ghost ring-focus inline-flex h-8 shrink-0 items-center gap-1.5 px-3 text-[12.5px]"

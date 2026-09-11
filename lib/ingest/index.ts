@@ -31,6 +31,20 @@ export const CAPTION_EXTENSIONS = new Set(["vtt", "srt", "sbv", "ttml", "dfxp", 
 /** 250 MB. Above this the browser will thrash before pdf.js even starts. */
 export const MAX_FILE_BYTES = 250 * 1024 * 1024;
 
+/**
+ * What the file picker offers, in one place.
+ *
+ * There are three pickers (the landing zone, the top bar, and a drop that
+ * falls back to one) and they were drifting apart; a format missing from one
+ * of them reads as "unsupported" even though ingestion handles it fine.
+ */
+export const ACCEPTED_FILE_TYPES = [
+  ".pdf", ".epub", ".txt", ".md", ".markdown", ".html", ".htm", ".xhtml",
+  ".vtt", ".srt", ".sbv", ".ttml", ".dfxp",
+  "application/pdf", "application/epub+zip", "text/plain", "text/markdown",
+  "text/html", "text/vtt",
+].join(",");
+
 export async function ingestFile(file: File, opts: IngestOptions = {}): Promise<Document> {
   const onProgress = opts.onProgress ?? (() => {});
   const chunking = opts.chunking ?? CHUNK_PRESETS.balanced;
