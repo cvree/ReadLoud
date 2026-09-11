@@ -38,7 +38,7 @@ afterwards. If you would rather not spend the download, switch the engine to
 
 | | |
 |---|---|
-| **Ingests** | PDF (pdf.js), EPUB, Markdown, HTML, plain text, pasted text |
+| **Ingests** | PDF (pdf.js), EPUB, Markdown, HTML, plain text, pasted text, subtitles (SRT/VTT/SBV/TTML), YouTube transcripts |
 | **Reads aloud** | Kokoro-82M running on-device (WebGPU, or WASM), plus your OS voices — one interface, hot-swappable |
 | **Follows along** | Word-level highlighting, sentence bedding, focus mode, auto-scroll |
 | **Exports audio** | Real MP3 via LAME in a worker, streaming, faster than realtime |
@@ -71,6 +71,9 @@ lib/
     pdf.ts                pdf.js streaming extraction + geometry reflow
     epub.ts               ZIP → OPF → spine → XHTML, with nav/NCX titles
     html.ts               DOM walk → speakable text
+    captions.ts           SRT/VTT/SBV/TTML/json3 → cues → listenable prose
+    youtube.ts            Hand-off codec and the two-tab relay
+    bookmarklet.ts        The zero-install helper
 
   text/
     normalize.ts          Ligatures, hyphenation, running headers, page numbers
@@ -106,6 +109,8 @@ lib/
 components/
   Workspace.tsx           Shell, top bar, theme, shortcuts
   Landing.tsx             Dropzone, paste, sample
+  LinkImport.tsx          YouTube import + helper setup
+  HandoffBridge.tsx       Receives a transcript from the helper
   Reader.tsx              Reading mode + word highlighting
   Outline.tsx             Sections, progress, full-text search
   VoiceStudio.tsx         Engine, voice, pacing, reading preferences
@@ -199,7 +204,7 @@ Note the `local` capability. Every provider that ships is `true`, and the UI
 promises as much to the reader — a hosted provider could not be added without
 contradicting that promise in code, which is the point of the flag.
 
-### 5. A studio voice with nobody's server in the loop
+### 4. A studio voice with nobody's server in the loop
 
 `lib/tts/kokoro.worker.ts`. The model is [Kokoro-82M][kokoro] — 82 million
 parameters, StyleTTS2 architecture, Apache-2.0 — served as ONNX and run by
@@ -232,7 +237,70 @@ served from our own origin, so no third party sits on the critical path.
 
 [kokoro]: https://huggingface.co/hexgrad/Kokoro-82M
 
-### 4. MP3 export
+### 5. YouTube, and why it needs a helper
+
+`lib/ingest/captions.ts`, `lib/ingest/youtube.ts`, `public/readloud-helper.user.js`.
+
+**A browser cannot fetch a YouTube transcript** — the caption endpoints send no
+`Access-Control-Allow-Origin`. That part is old news. What is newer is that **a
+server cannot reliably fetch one either**: caption URLs are increasingly stamped
+`exp=xpe`, meaning they require a proof-of-origin token that YouTube's player
+JavaScript mints at runtime. It is not a cookie, so forwarding a session does
+not substitute for it, and a request without one returns HTTP 200 with an empty
+body. Datacenter IPs — which is every host this app would deploy to — are
+challenged first besides.
+
+The one thing that always holds a valid token is the reader's own browser on
+the video page. So the extraction runs there, as a bookmarklet or a userscript,
+and the app is the receiving end. It costs no server, no key and no bill, it
+works on members-only and unlisted videos that no scraper can reach, and
+nothing is uploaded.
+
+**The transport is odd for a reason.** The obvious route —
+`window.opener.postMessage` — is unavailable here: `next.config.ts` sets
+`Cross-Origin-Opener-Policy: same-origin` to keep the page cross-origin
+isolated, which is what lets onnxruntime run inference multi-threaded, and that
+header also severs the opener relationship across origins. Trading every
+reader's synthesis speed for an import path is a bad bargain, so:
+
+```
+tab A (ReadLoud)  ──opens──▶  tab B (youtube.com)
+                                helper reads the captions
+tab A  ◀──BroadcastChannel──  tab B, navigated back to our origin
+                                with the payload gzipped into its hash
+```
+
+URL fragments are never sent to a server, and the relay is same-origin, so COOP
+never enters into it.
+
+#### The part that decides whether it is listenable
+
+Parsing captions is mechanical. Making them readable is not, and
+`repairCaptions` is where the work is:
+
+- **Rolling windows repeat themselves.** A scrolling track emits "the quick
+  brown" then "quick brown fox". Joined naively, the narrator says every phrase
+  twice. Overlaps of two or more words are trimmed; one word is left alone,
+  because "…and then" / "then we…" is ordinary speech, not a scroll.
+- **Cue boundaries are not sentence boundaries.** They are line breaks in a box
+  at the bottom of a video, and treating them as sentences gives the chunker a
+  break every four words.
+- **Auto-captions have no punctuation at all.** Nothing to segment on, nothing
+  to breathe on. Sentence breaks are put back from the pauses in the speech —
+  the pause *is* the punctuation, so this is transcribing it rather than
+  inventing it. It runs **only** on tracks that had essentially no punctuation
+  of their own; anything human-written is left exactly as written.
+
+Contiguous tracks — cue *n* ending exactly where *n+1* starts — are common and
+have no pauses to key off, so a run that goes too long without a break gets one
+anyway, placed at the best available boundary rather than wherever the counter
+ran out. "Best" is scored crudely: a real gap dominates, breaking before a
+discourse marker ("so", "now", "but") is rewarded, and breaking after a word
+that cannot end a sentence ("of", "the", "is") is penalised.
+
+`npm test` covers all of this, including that no words are lost or duplicated.
+
+### 6. MP3 export
 
 The critical piece, and the one where the obvious implementation fails.
 
@@ -347,6 +415,7 @@ re-renders one paragraph, measured at 0.57 ms on a 2,743-passage document.
 npm run dev        # dev server
 npm run build      # production build
 npm run typecheck  # tsc --noEmit
+npm test           # caption ingestion tests - no framework, no dependency
 ```
 
 In development, `window.__readloud` is available in the console:

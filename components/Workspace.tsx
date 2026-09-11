@@ -15,6 +15,7 @@ import { Outline } from "./Outline";
 import { VoiceStudio } from "./VoiceStudio";
 import { Transport } from "./Transport";
 import { ExportDialog } from "./ExportDialog";
+import { HandoffBridge } from "./HandoffBridge";
 import { Toaster } from "./Toaster";
 import { Button } from "./ui/Primitives";
 import {
@@ -205,6 +206,7 @@ export function Workspace() {
       )}
 
       <ExportDialog />
+      <HandoffBridge />
       <Toaster />
       {shortcuts && <Shortcuts onClose={() => setShortcuts(false)} />}
     </div>

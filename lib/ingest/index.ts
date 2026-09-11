@@ -12,12 +12,21 @@ import { extractPdf } from "./pdf";
 import { extractEpub } from "./epub";
 import { htmlToText } from "./html";
 import { looksLikeMarkdown, markdownToText } from "@/lib/text/markdown";
+import {
+  captionsToParts,
+  detectCaptionFormat,
+  looksLikeTranscriptPanel,
+  parseCaptions,
+} from "./captions";
+import type { YouTubeHandoff } from "./youtube";
 
 export interface IngestOptions {
   chunking?: ChunkOptions;
   onProgress?: (p: IngestProgress) => void;
   signal?: AbortSignal;
 }
+
+export const CAPTION_EXTENSIONS = new Set(["vtt", "srt", "sbv", "ttml", "dfxp", "srv3"]);
 
 /** 250 MB. Above this the browser will thrash before pdf.js even starts. */
 export const MAX_FILE_BYTES = 250 * 1024 * 1024;
@@ -50,6 +59,12 @@ export async function ingestFile(file: File, opts: IngestOptions = {}): Promise<
       const r = await extractEpub(buffer, onProgress, opts.signal);
       parts = r.parts;
       meta = { ...r.meta };
+      break;
+    }
+    case "captions": {
+      const cues = parseCaptions(decodeText(buffer));
+      parts = captionsToParts(cues);
+      meta = { warnings: captionWarnings(cues.length, parts.length) };
       break;
     }
     case "html": {
@@ -86,6 +101,14 @@ export function ingestText(
   opts: IngestOptions = {},
 ): Document {
   const chunking = opts.chunking ?? CHUNK_PRESETS.balanced;
+
+  // Somebody who copied YouTube's transcript panel has pasted timestamps
+  // interleaved with the words. Read as prose, the narrator would say
+  // "nought twelve" every four seconds.
+  if (looksLikeTranscriptPanel(text)) {
+    return ingestCaptionText(text, name, opts);
+  }
+
   let parts = splitPlainText(text, name);
   if (looksLikeMarkdown(text)) {
     parts = parts.map((p) => ({ ...p, text: markdownToText(p.text) }));
@@ -98,6 +121,56 @@ export function ingestText(
     meta: { warnings: [] },
     chunking,
   });
+}
+
+/**
+ * A caption track or a pasted transcript, as text. Shared by the file path,
+ * the paste box and the YouTube hand-off.
+ */
+export function ingestCaptionText(
+  text: string,
+  name = "Transcript",
+  opts: IngestOptions = {},
+): Document {
+  const cues = parseCaptions(text);
+  const parts = captionsToParts(cues);
+  return buildDocumentSync({
+    name,
+    kind: "captions",
+    bytes: new Blob([text]).size,
+    parts,
+    meta: { warnings: captionWarnings(cues.length, parts.length) },
+    chunking: opts.chunking ?? CHUNK_PRESETS.balanced,
+  });
+}
+
+/** A transcript handed over by the browser helper. */
+export function ingestYouTube(handoff: YouTubeHandoff, opts: IngestOptions = {}): Document {
+  const parts = captionsToParts(handoff.cues);
+  const doc = buildDocumentSync({
+    name: `${handoff.title}.transcript`,
+    kind: "captions",
+    bytes: handoff.cues.reduce((n, c) => n + c.text.length, 0),
+    parts,
+    meta: {
+      title: handoff.title,
+      author: handoff.author,
+      warnings: captionWarnings(handoff.cues.length, parts.length),
+    },
+    chunking: opts.chunking ?? CHUNK_PRESETS.balanced,
+  });
+  return doc;
+}
+
+function captionWarnings(cueCount: number, partCount: number): string[] {
+  if (cueCount === 0) return ["No caption lines were found in that file."];
+  if (partCount === 0) return ["That caption track had timings but no text."];
+  return [];
+}
+
+/** Is this something the caption pipeline can read? */
+export function isCaptionText(text: string): boolean {
+  return detectCaptionFormat(text) !== null;
 }
 
 /* ── internals ───────────────────────────────────────────────── */
@@ -167,6 +240,13 @@ async function detectKind(file: File, buffer: ArrayBuffer): Promise<SourceKind> 
     const probe = new TextDecoder().decode(new Uint8Array(buffer.slice(0, 128)));
     if (probe.includes("application/epub+zip")) return "epub";
     throw new Error("That ZIP archive is not an EPUB. Upload a PDF, EPUB, or text file.");
+  }
+
+  if (CAPTION_EXTENSIONS.has(ext)) return "captions";
+  // A caption file saved without its extension is still unmistakable.
+  const sniff = new TextDecoder().decode(new Uint8Array(buffer.slice(0, 512)));
+  if (/^\uFEFF?WEBVTT/.test(sniff) || /\d{1,2}:\d{2}:\d{2},\d{3}\s*-->/.test(sniff)) {
+    return "captions";
   }
 
   if (ext === "html" || ext === "htm" || ext === "xhtml") return "html";
