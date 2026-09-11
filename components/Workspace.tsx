@@ -16,6 +16,7 @@ import { formatClock } from "@/lib/audio/pipeline";
 import { ACCEPTED_FILE_TYPES } from "@/lib/ingest";
 import { Landing } from "./Landing";
 import { Reader } from "./Reader";
+import { Rsvp } from "./Rsvp";
 import { Outline } from "./Outline";
 import { VoiceStudio } from "./VoiceStudio";
 import { Transport } from "./Transport";
@@ -24,7 +25,7 @@ import { HandoffBridge } from "./HandoffBridge";
 import { Toaster } from "./Toaster";
 import { Button, Dialog, Sheet } from "./ui/Primitives";
 import {
-  Book, Close, Keyboard, List, Moon, Sliders, Sun, Upload, Waveform,
+  Book, Close, Eye, Keyboard, List, Moon, Sliders, Sun, Upload, Waveform,
 } from "./ui/Icons";
 
 /** Which panel the narrow-screen sheet is showing, if any. */
@@ -46,6 +47,8 @@ export function Workspace() {
   const [sheet, setSheet] = useState<SheetName>(null);
   const [shortcuts, setShortcuts] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+
+  const setRsvpEnabled = useStore((s) => s.setRsvpEnabled);
 
   const { openFile } = useIngest();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -121,8 +124,16 @@ export function Workspace() {
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (target?.isContentEditable) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Reading mode owns the keyboard while it is up — including `Esc`, which
+      // there means "back to the reader" rather than "close the panels".
+      // Explicit, and greppable, rather than a race between capture-phase
+      // handlers.
+      if (useStore.getState().rsvp.enabled) return;
 
       if (e.key === "?") setShortcuts((v) => !v);
+      if ((e.key === "r" || e.key === "R") && useStore.getState().doc) {
+        setRsvpEnabled(true);
+      }
       if (e.key === "Escape") {
         setShortcuts(false);
         setSheet(null);
@@ -137,7 +148,7 @@ export function Workspace() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showOutline]);
+  }, [showOutline, setRsvpEnabled]);
 
   /* ── Drop a file anywhere ─────────────────────────────────────
      Dropping onto the window outside the landing zone used to make the
@@ -235,6 +246,15 @@ export function Workspace() {
                 className={leftOpen ? "lg:text-ink-100" : ""}
               >
                 <List width={17} height={17} />
+              </Button>
+              <Button
+                variant="bare"
+                size="icon"
+                onClick={() => setRsvpEnabled(true)}
+                title="Reading mode — one word at a time (R)"
+                aria-label="Reading mode"
+              >
+                <Eye width={17} height={17} />
               </Button>
               <Button
                 variant="bare"
@@ -387,6 +407,7 @@ export function Workspace() {
       </Dialog>
 
       <ExportDialog />
+      <Rsvp />
       <HandoffBridge />
       <Toaster />
       <Shortcuts open={shortcuts} onClose={() => setShortcuts(false)} />
@@ -398,12 +419,17 @@ export function Workspace() {
 
 const KEYS: Array<[string, string]> = [
   ["Space / K", "Play or pause"],
+  ["R", "Reading mode — one word at a time"],
   ["← / →", "Back or forward 15 seconds"],
   ["Shift + ← / →", "Previous or next passage"],
   ["J / L", "Back or forward 30 seconds"],
   ["↑ / ↓", "Volume"],
   ["[ / ]", "Slower or faster"],
   ["F", "Focus mode — dim everything but the spoken passage"],
+  ["In reading mode: ← / →", "Back or forward one word"],
+  ["In reading mode: Shift + ← / →", "Back or forward one sentence"],
+  ["In reading mode: ↑ / ↓", "Faster or slower"],
+  ["In reading mode: Backspace", "Replay the last ten words, slower"],
   ["/", "Search the document"],
   ["Double-click a passage", "Start reading from there"],
   ["Esc", "Close whatever is open"],

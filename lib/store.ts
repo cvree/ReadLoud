@@ -20,11 +20,52 @@ import type {
 import { Narrator, type NarratorState } from "@/lib/player/engine";
 import { getProvider, PROVIDERS } from "@/lib/tts/registry";
 import { preloadModel } from "@/lib/tts/kokoro";
+import { silentPacer, wpmToRate } from "@/lib/rsvp/pacer";
+import { WPM_RANGE } from "@/lib/rsvp/pacing";
 import { CHUNK_PRESETS, type ChunkPreset } from "@/lib/text/chunk";
 import { chunkDocument } from "@/lib/text/chunk";
 import { unlockAudio } from "@/lib/audio/decode";
 
 export type ViewMode = "reader" | "outline" | "transcript";
+
+/**
+ * What moves the cursor in reading mode.
+ *
+ * `voice` is the differentiated one: the word display is driven by the
+ * narrator's own boundary events, so you get one-word-at-a-time reading with
+ * the voice running underneath it. Every other RSVP tool in this category
+ * shows you words in silence, and the main documented cost of RSVP is the
+ * comprehension hit from stripping prosody — which is exactly what the voice
+ * hands back.
+ *
+ * `silent` is the classic pacer: a clock, no audio, 150–1200 wpm.
+ */
+export type RsvpMode = "voice" | "silent";
+
+export interface RsvpState {
+  /** The full-bleed one-word display is up. */
+  enabled: boolean;
+  mode: RsvpMode;
+  /**
+   * Silent-mode target rate. Kept separate from `rate` on purpose: one is a
+   * voice control clamped to 0.5–3.0, the other is a pacer dial that goes to
+   * 1200 wpm. Conflating them is easy to get wrong once and confusing forever
+   * after.
+   */
+  wpm: number;
+  /** The current sentence, dimmed, under the word. The comprehension lever. */
+  ribbon: boolean;
+  /** True while a `Backspace` replay is running below the set rate. */
+  replaying: boolean;
+}
+
+/** How much slower a replay runs. */
+const REPLAY_SCALE = 0.7;
+
+function clampWpm(wpm: number): number {
+  const n = Number.isFinite(wpm) ? wpm : 400;
+  return Math.min(WPM_RANGE.max, Math.max(WPM_RANGE.min, Math.round(n)));
+}
 
 export interface Toast {
   id: string;
@@ -53,6 +94,9 @@ interface State {
   gapSeconds: number;
   stopAtSectionEnd: boolean;
 
+  /* reading mode */
+  rsvp: RsvpState;
+
   /* ui */
   view: ViewMode;
   focusMode: boolean;
@@ -76,6 +120,12 @@ interface State {
   setVolume(volume: number): void;
   setGap(seconds: number): void;
   setStopAtSectionEnd(v: boolean): void;
+  setRsvpEnabled(v: boolean): void;
+  setRsvpMode(mode: RsvpMode): void;
+  setRsvpWpm(wpm: number): void;
+  setRsvpRibbon(v: boolean): void;
+  startReplay(fromChar: number): void;
+  endReplay(): void;
   setView(view: ViewMode): void;
   setFocusMode(v: boolean): void;
   setFollowCursor(v: boolean): void;
@@ -151,6 +201,9 @@ interface Prefs {
   focusMode: boolean;
   followCursor: boolean;
   chunkPreset: ChunkPreset;
+  rsvpMode: RsvpMode;
+  rsvpWpm: number;
+  rsvpRibbon: boolean;
 }
 
 function loadPrefs(): Partial<Prefs> {
@@ -184,6 +237,11 @@ function savePrefs(state: State) {
     focusMode: state.focusMode,
     followCursor: state.followCursor,
     chunkPreset: state.chunkPreset,
+    // `enabled` is deliberately not persisted: reading mode is a thing you
+    // enter, not a state the app should open in.
+    rsvpMode: state.rsvp.mode,
+    rsvpWpm: state.rsvp.wpm,
+    rsvpRibbon: state.rsvp.ribbon,
   };
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
@@ -224,6 +282,41 @@ export const useStore = create<State>((set, get) => {
 
   const persist = () => savePrefs(get());
 
+  /* ── One place decides what drives the cursor ──────────────────
+     Silent reading mode swaps the narrator's provider for the pacer and
+     its rate for the WPM dial. Everything that can change either of
+     those routes through here, so the two can never disagree — and the
+     voice's own rate and voice id are left untouched underneath, ready
+     to be restored on the way out. */
+
+  const silentActive = (): boolean => {
+    const { rsvp } = get();
+    return rsvp.enabled && rsvp.mode === "silent";
+  };
+
+  const pacingRate = (): number => {
+    const s = get();
+    if (!silentActive()) return s.rate;
+    return wpmToRate(s.rsvp.wpm) * (s.rsvp.replaying ? REPLAY_SCALE : 1);
+  };
+
+  /** Re-point the narrator, continuing from `atChar` rather than restarting. */
+  const applyPacing = (atChar?: number) => {
+    const s = get();
+    const silent = silentActive();
+    narrator.retune(
+      silent ? silentPacer : getProvider(s.providerId),
+      { voiceId: silent ? "silent" : s.voiceId, rate: pacingRate() },
+      atChar,
+    );
+  };
+
+  /** Where the reader currently is, for a retune that must not lose the word. */
+  const cursorOrUndefined = (): number | undefined => {
+    const { cursor } = narrator.getState();
+    return cursor >= 0 ? cursor : undefined;
+  };
+
   return {
     doc: null,
     ingest: null,
@@ -239,6 +332,14 @@ export const useStore = create<State>((set, get) => {
     volume: prefs.volume ?? 1,
     gapSeconds: prefs.gapSeconds ?? 0.18,
     stopAtSectionEnd: false,
+
+    rsvp: {
+      enabled: false,
+      mode: prefs.rsvpMode ?? "voice",
+      wpm: clampWpm(prefs.rsvpWpm ?? 400),
+      ribbon: prefs.rsvpRibbon ?? true,
+      replaying: false,
+    },
 
     view: "reader",
     focusMode: prefs.focusMode ?? false,
@@ -312,7 +413,9 @@ export const useStore = create<State>((set, get) => {
     async selectProvider(id) {
       const generation = ++providerGeneration;
       const provider = getProvider(id);
-      narrator.setProvider(provider);
+      // While the pacer is driving, the chosen voice is remembered but not
+      // installed; `applyPacing` hands the narrator back on the way out.
+      if (!silentActive()) narrator.setProvider(provider);
       set({ providerId: id, voices: [] });
 
       const remembered = get().voiceId;
@@ -323,20 +426,22 @@ export const useStore = create<State>((set, get) => {
       // default for anyone who has not chosen one.
       const voiceId = voices.find((v) => v.id === remembered)?.id ?? voices[0]?.id ?? "";
       set({ voices, voiceId });
-      narrator.update({ providerId: id, voiceId });
+      if (!silentActive()) narrator.update({ providerId: id, voiceId });
       persist();
     },
 
     selectVoice(voiceId) {
       set({ voiceId });
-      narrator.update({ voiceId });
+      if (!silentActive()) narrator.update({ voiceId });
       persist();
     },
 
     setRate(rate) {
       const clamped = Math.min(3, Math.max(0.5, Number(rate.toFixed(2))));
       set({ rate: clamped });
-      narrator.update({ rate: clamped });
+      // In silent reading mode the clock belongs to the WPM dial. This slider
+      // stays the voice's rate and takes effect again on the way out.
+      if (!silentActive()) narrator.update({ rate: clamped });
       persist();
     },
 
@@ -361,6 +466,83 @@ export const useStore = create<State>((set, get) => {
     setStopAtSectionEnd(stopAtSectionEnd) {
       set({ stopAtSectionEnd });
       narrator.update({ stopAtSectionEnd });
+    },
+
+    /* ── Reading mode ───────────────────────────────────────────── */
+
+    setRsvpEnabled(enabled) {
+      const { rsvp } = get();
+      if (rsvp.enabled === enabled) return;
+
+      const st = narrator.getState();
+      const running = st.status === "playing" || st.status === "buffering";
+      const leavingSilent = !enabled && rsvp.mode === "silent";
+
+      // Leaving silent mode mid-passage must not start talking: you were
+      // reading in silence, and a voice arriving unannounced is a jump scare,
+      // not a feature. Tear the pacer down into `paused` first.
+      if (leavingSilent && running) narrator.suspend();
+
+      set({ rsvp: { ...rsvp, enabled, replaying: false } });
+      // Only silent mode swaps anything. In voice mode the overlay is a
+      // different renderer over the same playback, so retuning here would
+      // restart the passage — and re-synthesize it — for no reason.
+      if (rsvp.mode === "silent") applyPacing(cursorOrUndefined());
+      persist();
+    },
+
+    setRsvpMode(mode) {
+      const { rsvp } = get();
+      if (rsvp.mode === mode) return;
+
+      const st = narrator.getState();
+      const running = st.status === "playing" || st.status === "buffering";
+      if (rsvp.enabled && mode === "voice" && running) narrator.suspend();
+
+      set({ rsvp: { ...rsvp, mode, replaying: false } });
+      applyPacing(cursorOrUndefined());
+      persist();
+    },
+
+    setRsvpWpm(wpm) {
+      const { rsvp } = get();
+      const next = clampWpm(wpm);
+      if (next === rsvp.wpm) return;
+      set({ rsvp: { ...rsvp, wpm: next } });
+      // Re-pacing from the current word rather than the top of the passage:
+      // dragging the dial should change the speed, not your place.
+      if (silentActive()) applyPacing(cursorOrUndefined());
+      persist();
+    },
+
+    setRsvpRibbon(ribbon) {
+      set({ rsvp: { ...get().rsvp, ribbon } });
+      persist();
+    },
+
+    /**
+     * Re-read the last few words — the answer to RSVP's real complaint, which
+     * is that you cannot look back.
+     *
+     * Slower only in silent mode, where a rate change is free. In voice mode
+     * the re-listen *is* the replay, and dropping the rate would cost two
+     * re-synthesises and an audible speed change in the middle of a sentence
+     * for no comprehension gain.
+     *
+     * Starts playing if it was paused: a "replay" that leaves you looking at
+     * an earlier word and waiting for a second keystroke is not a replay.
+     */
+    startReplay(fromChar) {
+      set({ rsvp: { ...get().rsvp, replaying: silentActive() } });
+      applyPacing(fromChar);
+      const { status } = narrator.getState();
+      if (status !== "playing" && status !== "buffering") void narrator.play();
+    },
+
+    endReplay() {
+      if (!get().rsvp.replaying) return;
+      set({ rsvp: { ...get().rsvp, replaying: false } });
+      applyPacing(cursorOrUndefined());
     },
 
     setView(view) {
@@ -428,8 +610,20 @@ export const useStore = create<State>((set, get) => {
       // Clear the document first, for the same reason: unloading the narrator
       // reports passage 0, and that must not be written down as "where you
       // had got to" in the book being closed.
-      set({ doc: null, ingest: null, ingestError: null, view: "reader", exportProgress: null });
+      set({
+        doc: null,
+        ingest: null,
+        ingestError: null,
+        view: "reader",
+        exportProgress: null,
+        // An overlay with no document behind it is a blank screen with a
+        // keymap attached.
+        rsvp: { ...get().rsvp, enabled: false, replaying: false },
+      });
       narrator.load([]);
+      // Hand the narrator back to the voice: leaving the pacer installed
+      // would make the next document read itself in silence.
+      applyPacing();
     },
   };
 });

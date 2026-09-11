@@ -79,6 +79,11 @@ export class Narrator {
    * become.
    */
   private measured: Array<number | null> = [];
+  /**
+   * Where to resume the current passage from, set by `seekChar` while paused.
+   * Cleared as soon as the passage it belongs to is played or left behind.
+   */
+  private resumeAt: { index: number; char: number } | null = null;
 
   settings: NarratorSettings = {
     providerId: "webspeech",
@@ -97,6 +102,7 @@ export class Narrator {
 
   load(chunks: Chunk[]): void {
     this.hardStop();
+    this.resumeAt = null;
     this.chunks = chunks;
     this.measured = new Array(chunks.length).fill(null);
     this.rebuildPrefix();
@@ -137,9 +143,13 @@ export class Narrator {
     }
 
     const index = fromIndex ?? this.state.chunkIndex;
+    // A `seekChar` while paused leaves a resume point behind; pressing play
+    // should carry on from the word you stepped to, not from the top of the
+    // passage.
+    const from = this.resumeAt?.index === index ? this.resumeAt.char : 0;
     this.cancelCurrent();
     this.patch({ chunkIndex: index, status: "buffering", error: null });
-    void this.run(index, ++this.epoch);
+    void this.run(index, ++this.epoch, from);
   }
 
   pause(): void {
@@ -157,6 +167,20 @@ export class Narrator {
   stop(): void {
     this.hardStop();
     this.patch({ status: "idle", cursor: -1, cursorLength: 0 });
+  }
+
+  /**
+   * Cancel whatever is in flight and settle into `paused`, keeping the cursor
+   * exactly where it is.
+   *
+   * `pause()` suspends a live utterance and only works while one is playing;
+   * `stop()` throws the cursor away. Leaving silent reading mode needs
+   * neither: the pacer has to be torn down before the voice takes over, but
+   * the word you had reached is the whole point.
+   */
+  suspend(): void {
+    this.cancelCurrent();
+    this.patch({ status: "paused" });
   }
 
   next(): void {
@@ -180,6 +204,7 @@ export class Narrator {
   jump(index: number): void {
     const clamped = Math.max(0, Math.min(this.chunks.length - 1, index));
     const wasPlaying = this.state.status === "playing" || this.state.status === "buffering";
+    this.resumeAt = null;
     this.cancelCurrent();
     this.patch({
       chunkIndex: clamped,
@@ -195,6 +220,74 @@ export class Narrator {
   seekTime(seconds: number): void {
     const clamped = Math.max(0, Math.min(this.totalDuration(), seconds));
     this.jump(this.indexAtTime(clamped));
+  }
+
+  /**
+   * Seek to an absolute character offset in the document — the affordance
+   * reading mode is built on.
+   *
+   * `Narrator` was deliberately built without this, because you cannot seek
+   * into a Web Speech utterance. But "step back one word" is the single most
+   * important thing a one-word-at-a-time display can offer, and at balanced
+   * chunking a passage is ~150 words, so "restart the passage" is not an
+   * answer. Providers that advertise `capabilities.resume` honor the offset
+   * exactly; the rest restart the passage containing it, which is strictly
+   * better than ignoring the seek.
+   *
+   * Crossing a passage boundary is handled here rather than by the caller:
+   * stepping back from the first word of a passage lands on the last word of
+   * the one before it.
+   */
+  seekChar(absolute: number): void {
+    if (this.chunks.length === 0) return;
+    const index = this.indexAtChar(absolute);
+    const chunk = this.chunks[index];
+    const char = Math.max(0, Math.min(absolute - chunk.start, chunk.text.length - 1));
+    const wasPlaying = this.state.status === "playing" || this.state.status === "buffering";
+
+    this.cancelCurrent();
+    this.resumeAt = { index, char };
+    this.patch({
+      chunkIndex: index,
+      cursor: chunk.start + char,
+      cursorLength: firstWordLength(chunk.text.slice(char)),
+      position: this.chunkStart(index) + this.withinChunk(index, char),
+    });
+    this.onChunkChange(index);
+
+    if (wasPlaying) void this.run(index, ++this.epoch, char);
+    else this.patch({ status: this.state.status === "idle" ? "idle" : "paused" });
+  }
+
+  /**
+   * Swap the provider and its settings without losing your place in the
+   * passage.
+   *
+   * `update()` restarts the current passage from its start, which is right
+   * for a voice change you want to hear immediately and wrong for entering
+   * reading mode: the whole point is that the cursor does not move. Passing
+   * `atChar` continues from that offset instead, in one restart rather than
+   * two.
+   */
+  retune(provider: TTSProvider, partial: Partial<NarratorSettings>, atChar?: number): void {
+    const wasPlaying = this.state.status === "playing" || this.state.status === "buffering";
+    this.cancelCurrent();
+    this.provider = provider;
+    Object.assign(this.settings, partial, { providerId: provider.id });
+    // The rate may have changed by a factor of seven on the way into silent
+    // mode, so the timeline has to be rebuilt before anything reads it.
+    this.patch({ duration: this.totalDuration() });
+
+    if (atChar === undefined) {
+      if (wasPlaying) void this.run(this.state.chunkIndex, ++this.epoch);
+      else this.patch({ status: this.state.status === "idle" ? "idle" : "paused" });
+      return;
+    }
+
+    // `seekChar` re-reads `status`, which `cancelCurrent` left untouched, so
+    // playback continues from `atChar` if it was running.
+    if (wasPlaying) this.patch({ status: "buffering" });
+    this.seekChar(atChar);
   }
 
   /* ── live settings ──────────────────────────────────────────── */
@@ -228,11 +321,13 @@ export class Narrator {
 
   /* ── internals ──────────────────────────────────────────────── */
 
-  private async run(startIndex: number, epoch: number): Promise<void> {
+  private async run(startIndex: number, epoch: number, startChar = 0): Promise<void> {
     for (let i = startIndex; i < this.chunks.length; i++) {
       if (epoch !== this.epoch) return;
 
       const chunk = this.chunks[i];
+      // Only the first passage of a run can start part-way in.
+      const from = i === startIndex ? Math.max(0, Math.min(startChar, chunk.text.length - 1)) : 0;
       const provider = this.provider;
       if (!provider) {
         this.patch({ status: "error", error: "No speech provider is selected." });
@@ -242,12 +337,12 @@ export class Narrator {
       this.patch({
         chunkIndex: i,
         status: "buffering",
-        cursor: chunk.start,
+        cursor: chunk.start + from,
         // Seed with the first whole word: a zero length renders as a
         // one-character highlight for the frame before the first boundary
         // arrives, which reads as a glitch.
-        cursorLength: firstWordLength(chunk.text),
-        position: this.chunkStart(i),
+        cursorLength: firstWordLength(chunk.text.slice(from)),
+        position: this.chunkStart(i) + this.withinChunk(i, from),
       });
       this.onChunkChange(i);
 
@@ -264,6 +359,10 @@ export class Narrator {
       }
 
       const chunkStart = this.chunkStart(i);
+      // `startChar` is best-effort: a provider that cannot resume mid-utterance
+      // plays the passage from the beginning instead, which is the documented
+      // fallback rather than a silent failure.
+      const resumed = from > 0 && provider.capabilities.resume;
       let lastElapsed = 0;
       const handle = provider.speak(
         {
@@ -272,6 +371,7 @@ export class Narrator {
           rate: this.settings.rate,
           pitch: this.settings.pitch,
           volume: this.settings.volume,
+          startChar: resumed ? from : 0,
         },
         (b) => {
           if (epoch !== this.epoch) return;
@@ -300,7 +400,11 @@ export class Narrator {
       if (epoch !== this.epoch) return;
 
       this.handle = null;
-      this.record(i, lastElapsed);
+      // A half-played passage reports a half duration, and the sanity guard in
+      // `record` is too loose to catch it. One rewind would otherwise write a
+      // permanent lie into the timeline.
+      if (!resumed) this.record(i, lastElapsed);
+      if (this.resumeAt?.index === i) this.resumeAt = null;
 
       const next = this.chunks[i + 1];
       if (!next) break;
@@ -387,6 +491,36 @@ export class Narrator {
 
   private totalDuration(): number {
     return (this.prefix[this.prefix.length - 1] ?? 0) / this.settings.rate;
+  }
+
+  /** Binary search the chunks for the one containing an absolute offset. */
+  private indexAtChar(absolute: number): number {
+    let lo = 0;
+    let hi = this.chunks.length - 1;
+    let best = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.chunks[mid].start <= absolute) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Seconds into chunk `i` that a character offset corresponds to, pro rata.
+   *
+   * Only used to keep the scrubber honest after a mid-passage seek: the real
+   * figure is not knowable until the passage has been heard.
+   */
+  private withinChunk(i: number, char: number): number {
+    const chunk = this.chunks[i];
+    if (!chunk || chunk.text.length === 0 || char <= 0) return 0;
+    const seconds = (this.measured[i] ?? chunk.estSeconds) / this.settings.rate;
+    return seconds * Math.min(1, char / chunk.text.length);
   }
 
   /** Binary search the prefix sums for the chunk containing `seconds`. */

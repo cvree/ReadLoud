@@ -47,6 +47,7 @@ afterwards. If you would rather not spend the download, switch the engine to
 | **Ingests** | PDF (pdf.js), EPUB, Markdown, HTML, plain text, pasted text, subtitles (SRT/VTT/SBV/TTML), YouTube transcripts |
 | **Reads aloud** | Kokoro-82M running on-device (WebGPU, or WASM), plus your OS voices — one interface, hot-swappable |
 | **Follows along** | Word-level highlighting, sentence bedding, focus mode, auto-scroll |
+| **Reads with you** | Reading mode: one word at a time on a fixed pivot — paced by the voice, or by a clock at up to 1,200 wpm |
 | **Exports audio** | Real MP3 via LAME in a worker, streaming, faster than realtime |
 | **Exports text** | Markdown, plain text, SRT, WebVTT, JSON — with measured timings |
 | **Keeps your place** | Reopen the same file and it resumes at the passage you stopped on |
@@ -96,9 +97,18 @@ lib/
     webspeech.ts          Baseline provider (+ every Chrome/Safari workaround)
     buffered.ts           Playback for providers that return bytes, not speech
     cache.ts              Clip cache + prefetch — kills the gap between passages
+    language.ts           The reading language, and why a voice is English-first
     registry.ts  use-model-state.ts
 
   player/engine.ts        Narrator: the playback state machine. Framework-free.
+
+  rsvp/
+    tokenize.ts           Offset-preserving word tokens (the whole invariant)
+    orp.ts                The optimal recognition point — where the eye lands
+    pacing.ts             Per-word dwell, normalized so the dial does not lie
+    clock.ts              Drift-free scheduling; never skips a word
+    pacer.ts              The silent pacer, as a provider that makes no sound
+    selftest.ts           Offsets, pacing and drift, as property checks
 
   audio/
     mp3-encoder.worker.ts LAME, streaming, off the main thread
@@ -121,7 +131,8 @@ components/
   Landing.tsx             Dropzone, paste, sample
   LinkImport.tsx          YouTube import + helper setup
   HandoffBridge.tsx       Receives a transcript from the helper
-  Reader.tsx              Reading mode + word highlighting
+  Reader.tsx              The scrolling reader + word highlighting
+  Rsvp.tsx                Reading mode: the one-word-at-a-time overlay
   Outline.tsx             Sections, progress, full-text search
   VoiceStudio.tsx         Engine, voice, pacing, reading preferences
   Transport.tsx           Play/pause/scrub/speed/volume
@@ -138,7 +149,7 @@ public/
 
 ---
 
-## How the four hard parts work
+## How the hard parts work
 
 ### 1. Massive PDFs without killing the tab
 
@@ -374,6 +385,105 @@ pretending the limitation does not exist.
 
 ---
 
+### 7. Reading mode, and why it is not a second engine
+
+Press `R` and the app collapses to one word in the middle of an empty screen.
+
+The temptation is to build that as a new subsystem with its own cursor, its own
+clock and its own idea of where you are in the book — and then to spend the
+rest of the project reconciling the two. It is not one. **It is a second
+renderer over a cursor the app already computes.** `NarratorState.cursor` is an
+absolute character offset into `Document.text`, updated at word rate;
+`Reader.tsx` draws it as an amber highlight inside a paragraph, and
+`Rsvp.tsx` draws the same two numbers as one large word. Chunk advance,
+seeking, the section handling, the progress bar, the remembered place and the
+transport are already there and already correct.
+
+Two things drive that cursor, and the mode selector chooses between them:
+
+| | **Voice** | **Silent** |
+|---|---|---|
+| Paced by | the narration you are hearing | a wall clock |
+| Range | 82–495 wpm (voice `rate` 0.5–3) | 150–1,200 wpm |
+| Comprehension | prosody *and* no eye travel | the classic RSVP trade-off |
+
+Voice mode is the one nobody else has. Spreeder, Spritz, Reedy and the rest
+show you words in silence; the best-documented cost of RSVP is comprehension,
+and the main reason is that it strips prosody. Here the voice hands it back.
+
+**The silent pacer is a `TTSProvider` that makes no sound** (`lib/rsvp/pacer.ts`).
+It emits word boundaries and no audio, so `Narrator` drives it with no change
+to its control flow — and in silent mode the measured passage duration is
+*exact*, which makes the scrubber truthful after one passage rather than
+gradually. It is deliberately absent from `PROVIDERS`: it is not a voice, and
+it must never show up in the voice picker.
+
+Four details are the difference between this working and looking like it works:
+
+- **The pivot is a grid item.** The optimal recognition point sits just left of
+  centre and drifts right as words get longer. `.rsvp-word` is
+  `grid-template-columns: 1fr auto 1fr` with the pivot character in the middle
+  column, so it lands on the same pixel for every word — measured at 0 px of
+  spread across twelve consecutive words — with no measurement, no monospace
+  font and no per-glyph maths.
+- **The dial does not lie.** A flat `60000/wpm` makes punctuation vanish and
+  sentences run together, so commas, full stops and paragraph ends get longer
+  holds — and then the weights are *normalized to a mean of one*, so the extra
+  time is paid for by the words around them. At 600 wpm a 6,000-word chapter
+  takes ten minutes. `__readloud.rsvpPacingReport()` asserts it within 2%.
+- **The clock never skips.** Absolute deadlines rather than `setInterval`, at
+  most one word advanced per frame, and a frame gap over 250 ms (a throttled
+  tab, a GC pause, an inference spike) shifts the whole schedule forward rather
+  than fast-forwarding through words that came due while nothing was painting.
+  Silently skipping a word is the one failure the reader cannot detect.
+- **You can step back.** `Narrator.seekChar()` was the one real engine
+  addition: `←` moves one word, across a passage boundary if it has to, and
+  `Backspace` replays the last ten. Kokoro honors it by synthesizing the tail
+  of the passage, so it works with the voice as well as with the clock; Web
+  Speech cannot start an utterance part-way through and says so in
+  `capabilities.resume`, where it falls back to restarting the passage.
+
+Words *cut*; they never fade, slide or scale. A transition smears the glyph
+during the exact 90 ms you need to read it, and a repeating opacity animation
+at 600 wpm is a 10 Hz luminance change — squarely in photosensitivity
+territory. The word display is also `aria-live="off"`: a screen reader must not
+be fed ten words a second, so the passage is exposed as prose instead.
+
+And the claim is not a speed-reading claim. Above ~500 wpm the UI says plainly
+that there is a comprehension cost on unfamiliar material, because the research
+consensus (Rayner et al., *So Much to Read, So Little Time*, 2016) is that RSVP
+raises rate mainly by preventing regressions — and regressions are functional
+on 10–15% of fixations. The ceiling is 1,200 rather than the 2,000-plus the
+category advertises, because 1,200 is the last figure a 60 Hz display can
+actually deliver.
+
+---
+
+### 8. Reading in English
+
+Kokoro is an English-only model, the chunker segments sentences with an English
+locale, and reading mode's tokenizer uses an English abbreviation list and an
+English pivot table. So English is not a preference here, it is a fact about
+the pipeline — and `lib/tts/language.ts` is the one place it is written down.
+
+It matters most for the system voices, because `speechSynthesis.getVoices()`
+returns every voice the operating system has installed, in an order that has
+nothing to do with what the page is written in. Rank those voices on quality
+alone and a machine with a German network voice and an English compact one will
+read an English book with German phonetics — which does not sound like a bug,
+it sounds like gibberish. So:
+
+- language is a **separate, higher-priority sort key** than quality, and the
+  picker's first entry is what a first-time reader gets;
+- every voice shows the language it speaks (`Intl.DisplayNames`), not just a
+  bare "Premium" badge;
+- a non-English selection is allowed but says so, with one click to the best
+  English voice this engine has;
+- an utterance with no matched voice is tagged `en-US` rather than left to the
+  operating system's own default language.
+
+---
+
 ## Design notes
 
 Dark by default, unless your system asks for light — a first visit follows
@@ -424,10 +534,22 @@ re-renders one paragraph, measured at 0.57 ms on a 2,743-passage document.
 | `↑` / `↓` | Volume |
 | `[` / `]` | Slower / faster |
 | `F` | Focus mode |
+| `R` | Reading mode — one word at a time |
 | `/` | Search the document |
 | `Esc` | Close whatever is open |
 | `?` | Shortcuts |
 | Double-click a passage | Start reading there |
+
+In reading mode:
+
+| Key | Action |
+|---|---|
+| `Space` | Play / pause |
+| `←` / `→` | Back / forward one word |
+| `Shift` + `←` / `→` | Back / forward one sentence |
+| `↑` / `↓` | Faster / slower |
+| `Backspace` | Replay the last ten words, slower |
+| `Esc` / `R` | Back to the reader, on the same word |
 
 ---
 
@@ -447,11 +569,17 @@ In development, `window.__readloud` is available in the console:
 await __readloud.encodeSelfTest()   // sine → LAME → MP3, bitstream verified
 __readloud.state()                  // current store snapshot
 __readloud.clipCacheStats()
+__readloud.rsvpTokenRoundTrip()     // reading-mode offsets, on the open document
+__readloud.rsvpPacingReport(600)    // requested vs. delivered words per minute
+__readloud.rsvpDriftTest(900, 800)  // no drift, no skipped words
 ```
 
 `encodeSelfTest()` checks the output is a real MP3 — it scans for MPEG frame
 sync words and asserts the size matches the CBR expectation — rather than just
-confirming that bytes came out.
+confirming that bytes came out. The three reading-mode checks are the same
+idea: they assert a property rather than confirm something appeared. The first
+two run against whatever document is open, because the text that breaks a
+tokenizer is never the text you wrote a fixture for.
 
 ### Things that will bite you
 
@@ -468,6 +596,24 @@ confirming that bytes came out.
 - **Provider switching is generation-guarded.** `listVoices()` can take
   seconds; without the guard a slow response lands last and overwrites the
   selection you just made.
+- **Do not rank system voices on quality alone.** `getVoices()` is every voice
+  the machine has in every language it has; language has to be a separate and
+  higher-priority sort key, or a first-time reader gets an English book in
+  Dutch phonetics. See `lib/tts/language.ts`.
+- **Silent reading mode and the voice share one rate field, and must not
+  fight over it.** `store.rate` stays the voice's rate; `rsvp.wpm` is the
+  pacer's dial. Everything that can change either goes through `applyPacing`
+  in `lib/store.ts`, which is also what swaps the provider on the way in and
+  hands the narrator back on the way out.
+- **`Narrator.record()` skips a passage played from `startChar`.** A
+  half-played passage reports a half duration, the existing sanity guard is
+  too loose to catch it, and one rewind would write a permanent lie into the
+  timeline.
+- **Reading mode is frame-bound, by design.** The clock advances at most one
+  word per frame, so on a throttled tab the display falls behind rather than
+  skipping words. That is the right trade — but it means a headless browser
+  (rAF at ~5 fps) paces far slower than the dial, which is the environment
+  lying, not the app.
 
 ---
 

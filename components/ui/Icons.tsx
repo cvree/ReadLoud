@@ -65,6 +65,33 @@ export const Forward15 = (p: P) => (
     </text>
   </svg>
 );
+/* One word back / forward, for reading mode. A caret against a stop bar:
+   the same grammar as the skip icons without the interval, because the
+   interval here is a word rather than a number of seconds. */
+export const WordBack = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M14.5 6.5 9 12l5.5 5.5" />
+    <path d="M6.5 5.5v13" />
+  </svg>
+);
+export const WordForward = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M9.5 6.5 15 12l-5.5 5.5" />
+    <path d="M17.5 5.5v13" />
+  </svg>
+);
+export const Rewind = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M4 5.5v5.2h5.2" />
+    <path d="M4.6 10.7a7.6 7.6 0 1 1 1.5 6.1" />
+  </svg>
+);
+export const Eye = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M2.6 12S6 6.2 12 6.2 21.4 12 21.4 12 18 17.8 12 17.8 2.6 12 2.6 12Z" />
+    <circle cx="12" cy="12" r="2.6" />
+  </svg>
+);
 export const Volume = (p: P) => (
   <svg {...base(p)}>
     <path d="M11 5 6.5 8.8H3.5v6.4h3L11 19V5Z" />

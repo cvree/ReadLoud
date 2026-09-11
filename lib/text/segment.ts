@@ -82,7 +82,12 @@ function viaRegex(text: string): Span[] {
   return out;
 }
 
-function endsWithAbbreviation(s: string): boolean {
+/**
+ * Exported for `lib/rsvp/tokenize.ts`: a display that pauses on "Dr." as if
+ * it were the end of a sentence is the same bug in a different renderer, and
+ * this list should not exist twice.
+ */
+export function endsWithAbbreviation(s: string): boolean {
   const m = s.trimEnd().match(/([\p{L}.]+)\.$/u);
   if (!m) return false;
   const word = m[1].toLowerCase().replace(/\.$/, "");

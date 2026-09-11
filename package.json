@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --no-warnings scripts/captions.test.ts",
+    "test": "node --experimental-strip-types --no-warnings scripts/captions.test.ts && node --experimental-strip-types --no-warnings scripts/rsvp.test.ts",
     "postinstall": "node scripts/copy-pdf-worker.mjs && node scripts/copy-ort-runtime.mjs"
   },
   "dependencies": {

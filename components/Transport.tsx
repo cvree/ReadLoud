@@ -15,8 +15,8 @@ import { useStore, primeAudio } from "@/lib/store";
 import { formatClock } from "@/lib/audio/pipeline";
 import { Button, Slider } from "./ui/Primitives";
 import {
-  Back15, Bolt, Download, Focus, Forward15, Pause, Play, SkipBack, SkipForward,
-  Volume, VolumeMute,
+  Back15, Bolt, Download, Eye, Focus, Forward15, Pause, Play, SkipBack,
+  SkipForward, Volume, VolumeMute,
 } from "./ui/Icons";
 
 const RATES = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -42,6 +42,7 @@ export function Transport() {
   const setVolume = useStore((s) => s.setVolume);
   const focusMode = useStore((s) => s.focusMode);
   const setFocusMode = useStore((s) => s.setFocusMode);
+  const setRsvpEnabled = useStore((s) => s.setRsvpEnabled);
   const setExportOpen = useStore((s) => s.setExportOpen);
 
   const [scrub, setScrub] = useState<number | null>(null);
@@ -116,6 +117,10 @@ export function Transport() {
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (target?.isContentEditable) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Reading mode rebinds most of this keymap — the arrows step by word
+      // there, not by fifteen seconds — so hand the keyboard over wholesale
+      // rather than fighting listener order.
+      if (useStore.getState().rsvp.enabled) return;
 
       switch (e.key) {
         case " ":
@@ -368,6 +373,15 @@ export function Transport() {
 
           <div className="mx-1.5 hidden h-6 w-px bg-[var(--hairline)] sm:block" />
 
+          <Button
+            variant="bare"
+            size="icon"
+            onClick={() => setRsvpEnabled(true)}
+            title="Reading mode — one word at a time (R)"
+            aria-label="Reading mode"
+          >
+            <Eye width={18} height={18} />
+          </Button>
           <Button
             variant="bare"
             size="icon"

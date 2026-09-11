@@ -9,8 +9,9 @@ import { useStore, primeAudio } from "@/lib/store";
 import { PROVIDERS, getProvider } from "@/lib/tts/registry";
 import { useModelState } from "@/lib/tts/use-model-state";
 import { CHUNK_PRESETS, type ChunkPreset } from "@/lib/text/chunk";
+import { isEnglishVoice, languageLabel } from "@/lib/tts/language";
 import { Button, Field, Segmented, Select, Slider, Switch } from "./ui/Primitives";
-import { Mic, Play, Sparkle, Warning } from "./ui/Icons";
+import { Eye, Mic, Play, Sparkle, Warning } from "./ui/Icons";
 import type { ProviderId } from "@/lib/types";
 
 const PREVIEW =
@@ -39,6 +40,8 @@ export function VoiceStudio() {
   const setFontScale = useStore((s) => s.setFontScale);
   const chunkPreset = useStore((s) => s.chunkPreset);
   const setChunkPreset = useStore((s) => s.setChunkPreset);
+  const setRsvpEnabled = useStore((s) => s.setRsvpEnabled);
+  const doc = useStore((s) => s.doc);
   const toast = useStore((s) => s.toast);
 
   const [previewing, setPreviewing] = useState(false);
@@ -57,6 +60,16 @@ export function VoiceStudio() {
         hint: v.tag ?? [v.lang, v.local === false ? "network" : "on-device"].join(" - "),
         badge: v.local === false ? "network" : undefined,
       })),
+    [voices],
+  );
+
+  const selectedVoice = useMemo(
+    () => voices.find((v) => v.id === voiceId),
+    [voices, voiceId],
+  );
+  /** The best English voice this engine has, for the one-click fix below. */
+  const englishVoice = useMemo(
+    () => voices.find((v) => isEnglishVoice(v.lang)),
     [voices],
   );
 
@@ -173,6 +186,30 @@ export function VoiceStudio() {
         </div>
       )}
 
+      {selectedVoice && !isEnglishVoice(selectedVoice.lang) && (
+        <div className="mt-2 flex gap-2 rounded-lg border border-[color-mix(in_oklab,var(--color-ember-500)_28%,transparent)] bg-[color-mix(in_oklab,var(--color-ember-500)_8%,transparent)] px-2.5 py-2">
+          <Warning width={13} height={13} className="mt-0.5 shrink-0 text-ember-500" />
+          <p className="text-[11px] leading-snug text-ember-400">
+            {selectedVoice.name} is a{" "}
+            {languageLabel(selectedVoice.lang)} voice. ReadLoud reads in English, and
+            an English sentence spoken with another language&apos;s phonemes is close
+            to unintelligible.{" "}
+            {englishVoice ? (
+              <button
+                className="underline decoration-dotted underline-offset-2 hover:text-ember-500"
+                onClick={() => selectVoice(englishVoice.id)}
+              >
+                Switch to {englishVoice.name}
+              </button>
+            ) : (
+              <span className="text-ink-400">
+                This browser has no English voice installed — Kokoro brings its own.
+              </span>
+            )}
+          </p>
+        </div>
+      )}
+
       {voices.length > 0 && !provider.capabilities.boundaries && (
         <div className="mt-2 flex gap-2 rounded-lg border border-[color-mix(in_oklab,var(--color-ember-500)_28%,transparent)] bg-[color-mix(in_oklab,var(--color-ember-500)_8%,transparent)] px-2.5 py-2">
           <Warning width={13} height={13} className="mt-0.5 shrink-0 text-ember-500" />
@@ -261,7 +298,18 @@ export function VoiceStudio() {
         />
       </Field>
 
-      <div className="mt-1 divide-y divide-[var(--hairline)]">
+      <Button
+        size="sm"
+        className="mt-1 w-full gap-1.5"
+        disabled={!doc}
+        onClick={() => setRsvpEnabled(true)}
+        title="One word at a time, paced by the voice or by a clock (R)"
+      >
+        <Eye width={13} height={13} />
+        Enter reading mode
+      </Button>
+
+      <div className="mt-3 divide-y divide-[var(--hairline)]">
         <Switch
           checked={followCursor}
           onChange={setFollowCursor}

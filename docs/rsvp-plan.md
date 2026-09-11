@@ -1,8 +1,72 @@
 # RSVP — reading one word at a time
 
-**Status:** plan. Nothing here is built yet.
+**Status:** built. Phase 1 (reading mode) and phase 2 (captions) have shipped;
+phase 3 is still open. This document is kept as the design record — read
+[what shipped](#0-what-shipped) first, because the plan below is the argument,
+not the code.
 **Scope:** a Rapid Serial Visual Presentation mode for ReadLoud, plus the
 ingestion work needed to point it at YouTube transcripts.
+
+---
+
+## 0. What shipped
+
+| | |
+|---|---|
+| `lib/rsvp/tokenize.ts` | offset-preserving tokens, punctuation attached, numbers whole, wide words split |
+| `lib/rsvp/orp.ts` | the pivot table |
+| `lib/rsvp/pacing.ts` | per-word dwell, normalized to the dial, plus the ramp-up |
+| `lib/rsvp/clock.ts` | absolute deadlines, stall rebasing, injectable clock |
+| `lib/rsvp/pacer.ts` | the silent pacer, as a `TTSProvider` |
+| `lib/rsvp/selftest.ts` | the three property checks from §9 |
+| `components/Rsvp.tsx` | the overlay: both modes, context ribbon, keymap, WPM dial |
+| `lib/store.ts` | the `rsvp` slice, and one place that decides what drives the cursor |
+| `lib/player/engine.ts` | `seekChar`, `retune`, `suspend`, and `startChar` through the run loop |
+| `lib/types.ts` | `SpeakRequest.startChar`, `ProviderCapabilities.resume` |
+| `scripts/rsvp.test.ts` | 32 assertions, no framework, runs under `npm test` |
+
+**Decisions taken:** D1 sans, D2 1200 wpm, D3 overlay, D5 voice-synced by
+default, D6 ribbon on. D4 was settled by [`youtube-ingest.md`](./youtube-ingest.md).
+
+**Where the implementation differs from the plan below, and why:**
+
+1. **`RsvpToken` carries both `text` and `display`.** The plan asserted
+   `doc.text.slice(t.start, t.end) === t.text` for every token *and* a trailing
+   hyphen on split fragments, which cannot both be true. `text` is the exact
+   slice and `display` is what the screen shows, so the invariant survives
+   intact and the self-test asserts it against the real document.
+2. **Wide words get three characters of slack before splitting.** Cutting
+   strictly at thirteen turned `"unremarkable,"` into a twelve-character flash
+   followed by a three-character one, which reads as a glitch rather than as a
+   long word. Over the slack, pieces are balanced rather than greedy.
+3. **Normalization is per passage, not per document.** The passage is what the
+   pacer is handed, and normalizing there makes each passage's duration exactly
+   `words / wpm` — which is also what makes the measured timeline agree with
+   the schedule. The document-wide check is `rsvpPacingReport()`.
+4. **No "first token of a section" multiplier at runtime.** The weight exists
+   in `pacing.ts`, but the narrator already inserts an extra 0.45 s at a
+   section boundary, so plumbing section awareness through `SpeakRequest` would
+   have bought the same beat twice.
+5. **Kokoro honors `startChar`.** The plan expected only the pacer to, with the
+   voice restarting the passage. It turned out to be four lines in
+   `lib/tts/buffered.ts` — synthesize the tail, translate the boundaries back —
+   so stepping back one word works with the voice too, at the cost of one
+   inference. Web Speech still cannot, and says so via `capabilities.resume`.
+6. **`Narrator.retune()` and `Narrator.suspend()` were needed.** `update()`
+   restarts the passage from its beginning, which is exactly wrong for entering
+   reading mode; and leaving silent mode mid-passage has to tear the pacer down
+   without the voice picking up where it stopped and talking at you.
+7. **Replay is slower only in silent mode.** Backspace steps back ten words
+   everywhere; in silent mode it also drops to 70% and restores itself on
+   catching up. In voice mode the re-listen *is* the replay, and a rate change
+   there costs a re-synthesis mid-sentence.
+8. **The drift check runs on a fake clock.** `driftTest` takes its `now` and
+   its frame source as options, so `npm test` asserts 500 words with no drift,
+   a 400 ms stall rebased rather than skipped, and a 30 Hz display losing
+   nothing — in milliseconds, on a machine with no screen.
+
+**Still open (phase 3):** session stats, multi-word flashes, per-document
+resume of the reading position, and video-synced mode.
 
 ---
 

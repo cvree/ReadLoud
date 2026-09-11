@@ -333,6 +333,100 @@ body {
   to { transform: scale(1); opacity: 1; }
 }
 
+/* ── Reading mode (RSVP) ──────────────────────────────────────────
+   The premise is that nothing else is on screen, so this is a veil
+   over the whole app rather than a panel inside it.
+
+   The pivot character is a grid item in a centre column of `auto`
+   width between two `1fr` columns, which puts it on the same pixel
+   for every word with no measurement, no monospace font and no
+   per-glyph maths. That single rule is the whole trick: your eye does
+   not move because there is nothing to find.
+
+   Sans rather than the reader's serif: at 60 ms exposure the lower
+   stroke contrast reads more reliably, and it makes reading mode
+   visibly a different mode.
+
+   No per-word transition anywhere below. Words cut. */
+
+.rsvp-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  /* Opaque, and the one place in the app that is. Everywhere else translucency
+     is how depth is expressed; here anything showing through is a second thing
+     on screen for your eye to find, which is the one thing this mode is for
+     not having. A 4% wash of the paragraph behind it is still legible enough
+     to read, and therefore still a distraction. */
+  background: var(--color-ink-950);
+}
+
+.rsvp-word {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  width: min(92vw, 46ch);
+  font-family: var(--font-sans);
+  font-size: clamp(2.1rem, 8.5vw, 4.6rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--color-ink-100);
+  /* The display is a single line by definition: a word that wraps has
+     already failed, and `tokenize` splits anything over 13 characters. */
+  white-space: pre;
+}
+.rsvp-pre {
+  text-align: right;
+  overflow: hidden;
+}
+.rsvp-post {
+  text-align: left;
+  overflow: hidden;
+}
+/* The pivot is the spoken word, so it gets the app's one amber. */
+.rsvp-pivot {
+  color: var(--color-ember-500);
+}
+
+/* Two ticks marking the fixation column, Spritz-style: they are what makes
+   the fixed pivot legible as a promise rather than a coincidence. */
+.rsvp-rail {
+  position: relative;
+  width: min(92vw, 46ch);
+  height: 12px;
+}
+.rsvp-rail::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 2px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--hairline-strong);
+  transform: translateX(-50%);
+}
+
+/* The context ribbon: the sentence around the word, dimmed. Serif, because
+   this is the document speaking rather than the app. */
+.rsvp-ribbon {
+  margin-top: 2.6rem;
+  width: min(92vw, 62ch);
+  min-height: 4.2em;
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  line-height: 1.7;
+  text-align: center;
+  color: color-mix(in oklab, var(--color-ink-300) 70%, transparent);
+}
+.rsvp-ribbon-word {
+  color: var(--color-ember-400);
+  font-weight: 600;
+}
+
 /* Focus mode dims everything except the passage being read, so a
    1,200-page document collapses to the two paragraphs that matter. */
 .focus-dim .passage:not(.passage-active) {

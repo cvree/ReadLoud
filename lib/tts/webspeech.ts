@@ -14,6 +14,14 @@
    * Safari fires no `boundary` events at all, so highlighting falls
      back to a timed estimator.
    * Firefox reports `charLength: 0` on boundary events.
+   * `getVoices()` returns every voice the operating system has
+     installed, in an order that has nothing to do with what the
+     page is written in. A machine with a German network voice and
+     an English compact one would happily read an English book with
+     German phonetics, which sounds like gibberish rather than like
+     a bug. English voices therefore sort first, unconditionally,
+     and an utterance with no matched voice is tagged `en-US`
+     rather than left to the OS default language.
 
    IMPORTANT ARCHITECTURAL NOTE: the Web Speech API deliberately gives
    no access to the synthesized audio stream. There is no
@@ -30,6 +38,7 @@ import type {
   Voice,
 } from "@/lib/types";
 import { BASE_WPM } from "@/lib/text/normalize";
+import { FALLBACK_LANG, isEnglishVoice, languageLabel } from "./language";
 
 /** Chrome's watchdog fires around 15s; resume well before that. */
 const KEEPALIVE_MS = 9_000;
@@ -74,7 +83,12 @@ async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-/** Rank voices so the good ones float to the top of the picker. */
+/**
+ * Rank voices *within a language* so the good ones float to the top of the
+ * picker. Language itself is a separate, higher-priority sort key: a premium
+ * Dutch voice is still the wrong answer for an English document, and scoring
+ * the two against each other is how you end up with one.
+ */
 function qualityScore(v: SpeechSynthesisVoice): number {
   const n = v.name.toLowerCase();
   let score = 0;
@@ -84,7 +98,6 @@ function qualityScore(v: SpeechSynthesisVoice): number {
   if (/microsoft/.test(n)) score += 15;
   if (/compact|novelty|eloquence|espeak/.test(n)) score -= 40;
   if (v.default) score += 5;
-  if (v.lang.toLowerCase().startsWith("en")) score += 10;
   return score;
 }
 
@@ -98,6 +111,10 @@ export const webSpeechProvider: TTSProvider = {
     boundaries: true,
     rate: true,
     pitch: true,
+    // There is no way to start an utterance part-way through: the API takes a
+    // string and speaks all of it. Reading mode falls back to restarting the
+    // passage when you step back a word on this engine.
+    resume: false,
     local: true,
   },
 
@@ -109,15 +126,25 @@ export const webSpeechProvider: TTSProvider = {
     if (voiceCache) return voiceCache;
     const native = await loadVoices();
     voiceCache = native
-      .map((v) => ({ v, score: qualityScore(v) }))
-      .sort((a, b) => b.score - a.score || a.v.name.localeCompare(b.v.name))
+      .map((v) => ({ v, score: qualityScore(v), english: isEnglishVoice(v.lang) }))
+      // Language first, quality second. `selectProvider` takes index 0 as the
+      // default for anyone who has not chosen a voice, so this ordering is
+      // what actually decides whether a first-time reader hears English.
+      .sort(
+        (a, b) =>
+          Number(b.english) - Number(a.english) ||
+          b.score - a.score ||
+          a.v.name.localeCompare(b.v.name),
+      )
       .map(({ v, score }) => ({
         id: v.voiceURI,
         name: v.name.replace(/^(Microsoft|Google)\s+/, ""),
         provider: "webspeech" as const,
         lang: v.lang,
         local: v.localService,
-        tag: score >= 60 ? "Premium" : v.localService ? "Offline" : "Network",
+        tag: `${languageLabel(v.lang)} · ${
+          score >= 60 ? "premium" : v.localService ? "offline" : "network"
+        }`,
       }));
     return voiceCache;
   },
@@ -138,6 +165,12 @@ export const webSpeechProvider: TTSProvider = {
     if (voice) {
       utter.voice = voice;
       utter.lang = voice.lang;
+    } else {
+      // No match — a stale remembered voice, or an engine that lost its list.
+      // Left unset, Chrome and Safari fall back to the *system* language and
+      // read English text with the wrong phoneme set. Say what language the
+      // text is in instead.
+      utter.lang = FALLBACK_LANG;
     }
     utter.rate = clamp(req.rate, 0.1, 10);
     utter.pitch = clamp(req.pitch, 0, 2);

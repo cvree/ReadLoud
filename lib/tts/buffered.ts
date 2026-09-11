@@ -24,16 +24,30 @@ export interface BufferedPlaybackOptions {
 /**
  * Play a clip through an `<audio>` element and interpolate boundaries from
  * wall-clock position, so reading mode still highlights along with the voice.
+ *
+ * `req.startChar` is honored by synthesizing only the tail of the passage.
+ * That is what lets reading mode step back one word without restarting the
+ * whole passage on the neural voice: it costs one inference (Kokoro renders
+ * faster than realtime, so a passage is a fraction of a second) and the
+ * prosody restarts from that word rather than being spliced, which is the
+ * honest version of resuming mid-sentence. Boundary events are reported
+ * against the *full* passage, so nothing above this function has to know.
  */
 export function playBuffered(
   req: SpeakRequest,
   onBoundary: ((e: BoundaryEvent) => void) | undefined,
   opts: BufferedPlaybackOptions,
 ): SpeechHandle {
+  const offset = Math.max(0, Math.min(req.startChar ?? 0, Math.max(0, req.text.length - 1)));
+  // Everything below works in tail coordinates; only the boundary events are
+  // translated back.
+  const tail: SpeakRequest =
+    offset > 0 ? { ...req, text: req.text.slice(offset), startChar: 0 } : req;
+
   const audio = new Audio();
   audio.preload = "auto";
   audio.volume = Math.min(1, Math.max(0, req.volume));
-  audio.playbackRate = opts.playbackRate(req);
+  audio.playbackRate = opts.playbackRate(tail);
   audio.preservesPitch = true;
 
   let url: string | null = null;
@@ -45,14 +59,22 @@ export function playBuffered(
     const dur = audio.duration;
     if (Number.isFinite(dur) && dur > 0 && onBoundary) {
       const ratio = Math.min(1, audio.currentTime / dur);
-      const snapped = snapToWord(req.text, Math.floor(ratio * req.text.length));
-      onBoundary({ ...snapped, elapsed: audio.currentTime });
+      const snapped = snapToWord(tail.text, Math.floor(ratio * tail.text.length));
+      // The clip is only the tail, so its clock starts at zero. Add back a
+      // pro-rata estimate of the part that was skipped, or the transport bar
+      // would jump backwards every time somebody steps into a passage.
+      const skipped = offset > 0 ? (offset / tail.text.length) * dur : 0;
+      onBoundary({
+        charIndex: snapped.charIndex + offset,
+        charLength: snapped.charLength,
+        elapsed: skipped + audio.currentTime,
+      });
     }
     raf = requestAnimationFrame(tick);
   };
 
   const done = (async () => {
-    const { bytes, mime } = await opts.load(req);
+    const { bytes, mime } = await opts.load(tail);
     if (cancelled) return;
     url = URL.createObjectURL(new Blob([bytes], { type: mime }));
     audio.src = url;

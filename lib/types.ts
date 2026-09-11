@@ -89,7 +89,12 @@ export interface IngestProgress {
 
 /* ── TTS ─────────────────────────────────────────────────────── */
 
-export type ProviderId = "webspeech" | "kokoro";
+/**
+ * `silent` is the RSVP pacer in `lib/rsvp/pacer.ts`: a provider that emits
+ * word boundaries and no audio. It is deliberately absent from `PROVIDERS`
+ * so it can never appear in the voice picker.
+ */
+export type ProviderId = "webspeech" | "kokoro" | "silent";
 
 export interface Voice {
   id: string;
@@ -112,6 +117,17 @@ export interface SpeakRequest {
   pitch: number;
   /** 0 – 1 */
   volume: number;
+  /**
+   * Start this far into `text` rather than at the beginning — what makes
+   * stepping back one word possible inside a passage.
+   *
+   * Best-effort: honored only by providers that advertise
+   * `capabilities.resume`, and ignored (start from 0) by the rest, because
+   * you cannot seek into a Web Speech utterance that is already queued.
+   * Boundary events are still reported against the full `text`, so the
+   * caller's offsets never have to know this happened.
+   */
+  startChar?: number;
   signal?: AbortSignal;
 }
 
@@ -139,6 +155,12 @@ export interface ProviderCapabilities {
   /** Honors a rate multiplier natively. */
   rate: boolean;
   pitch: boolean;
+  /**
+   * Honors `SpeakRequest.startChar` — i.e. playback can begin mid-passage.
+   * Reading mode needs this to step back a word without restarting the
+   * whole passage.
+   */
+  resume: boolean;
   /**
    * Runs entirely on the reader's machine — no account, no key, no request
    * ever leaves the browser. Every provider ReadLoud ships is `true`; the flag

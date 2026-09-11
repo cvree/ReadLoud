@@ -6,12 +6,16 @@
      await __readloud.encodeSelfTest()   // sine -> LAME -> MP3, verified
      __readloud.state()                  // current store snapshot
      __readloud.clipCacheStats()
+     __readloud.rsvpTokenRoundTrip()     // reading-mode offsets, on this doc
+     __readloud.rsvpPacingReport(600)    // requested vs. delivered wpm
+     __readloud.rsvpDriftTest(900, 800)  // no drift, no skipped words
 
    Guarded by NODE_ENV so none of it reaches a production bundle.
    ──────────────────────────────────────────────────────────────── */
 
 import { Mp3Recorder } from "@/lib/audio/encode";
 import * as clips from "@/lib/tts/cache";
+import { driftTest, pacingReport, tokenRoundTrip } from "@/lib/rsvp/selftest";
 
 export interface EncodeSelfTest {
   ok: boolean;
@@ -79,13 +83,27 @@ export async function encodeSelfTest(seconds = 2, kbps = 96): Promise<EncodeSelf
   };
 }
 
-export function installDevtools(state: () => unknown): void {
+/** The slice of the store the reading-mode checks need. */
+interface DevtoolsState {
+  doc: { text: string } | null;
+}
+
+export function installDevtools(state: () => DevtoolsState): void {
   if (process.env.NODE_ENV === "production") return;
   if (typeof window === "undefined") return;
+
+  /* The reading-mode checks run against whatever is open, because the text
+     that breaks a tokenizer is never the text you wrote a fixture for — it is
+     a PDF with soft hyphens and a table of contents in it. */
+  const text = () => state().doc?.text ?? "";
+
   (window as unknown as Record<string, unknown>).__readloud = {
     encodeSelfTest,
     state,
     clipCacheStats: clips.stats,
     clearClipCache: clips.clear,
+    rsvpTokenRoundTrip: () => tokenRoundTrip(text()),
+    rsvpPacingReport: (wpm = 600) => pacingReport(text(), wpm),
+    rsvpDriftTest: (wpm = 600, words = 400) => driftTest(wpm, words),
   };
 }

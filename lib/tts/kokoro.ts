@@ -239,6 +239,10 @@ export const kokoroProvider: TTSProvider = {
     boundaries: false,
     rate: true,
     pitch: false,
+    // Honored by re-synthesizing the tail of the passage from `startChar`.
+    // That costs one inference, which is what makes stepping back a word work
+    // for the voice as well as for the silent pacer.
+    resume: true,
     local: true,
   },
 
